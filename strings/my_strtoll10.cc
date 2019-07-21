@@ -31,6 +31,7 @@
 #include "m_string.h"  // IWYU pragma: keep
 #include "my_inttypes.h"
 #include "my_sys.h" /* Needed for MY_ERRNO_ERANGE */
+#include <ctype.h>
 
 #define MAX_NEGATIVE_NUMBER ((ulonglong)0x8000000000000000LL)
 #define INIT_CNT 9
@@ -96,11 +97,11 @@ longlong my_strtoll10(const char *nptr, const char **endptr, int *error) {
   /* If fixed length string */
   if (endptr) {
     end = *endptr;
-    while (s != end && (*s == ' ' || *s == '\t')) s++;
+    while (s != end && isspace(*s)) s++;
     if (s == end) goto no_conv;
   } else {
     endptr = &dummy; /* Easier end test */
-    while (*s == ' ' || *s == '\t') s++;
+    while (isspace(*s)) s++;
     if (!*s) goto no_conv;
     /* This number must be big to guard against a lot of pre-zeros */
     end = s + 65535; /* Can't be longer than this */
