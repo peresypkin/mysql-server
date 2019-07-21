@@ -16,6 +16,7 @@
 #include <my_global.h>
 #include <my_sys.h>            /* Needed for MY_ERRNO_ERANGE */
 #include <m_string.h>
+#include <ctype.h>
 
 #define MAX_NEGATIVE_NUMBER	((ulonglong) LL(0x8000000000000000))
 #define INIT_CNT  9
@@ -86,7 +87,7 @@ longlong my_strtoll10(const char *nptr, char **endptr, int *error)
   if (endptr)
   {
     end= *endptr;
-    while (s != end && (*s == ' ' || *s == '\t'))
+    while (s != end && isspace(*s))
       s++;
     if (s == end)
       goto no_conv;
@@ -94,7 +95,7 @@ longlong my_strtoll10(const char *nptr, char **endptr, int *error)
   else
   {
     endptr= &dummy;				/* Easier end test */
-    while (*s == ' ' || *s == '\t')
+    while (isspace(*s))
       s++;
     if (!*s)
       goto no_conv;
