@@ -1661,7 +1661,7 @@ longlong Item_func_unsigned::val_int()
   {
     my_decimal tmp, *dec= args[0]->val_decimal(&tmp);
     if (!(null_value= args[0]->null_value))
-      my_decimal2int(E_DEC_FATAL_ERROR, dec, 1, &value);
+      my_decimal2int(E_DEC_FATAL_ERROR, dec, args[0]->unsigned_flag, &value);
     else
       value= 0;
     return value;
