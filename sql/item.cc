@@ -9712,7 +9712,10 @@ double Item_cache_int::val_real()
   DBUG_ASSERT(fixed == 1);
   if (!has_value())
     return 0.0;
-  return (double) value;
+  if (unsigned_flag) {
+    return static_cast<double>(static_cast<ulonglong>(value));
+  }
+  return static_cast<double>(value);
 }
 
 longlong Item_cache_int::val_int()
