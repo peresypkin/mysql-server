@@ -2718,9 +2718,14 @@ runBug33793(NDBT_Context* ctx, NDBT_Step* step)
   int loops = ctx->getNumLoops();
 
   NdbRestarter restarter;
+  // Restart all but one node in a node group
+  int numNodesToRestart = (restarter.getNumDbNodes() / restarter.getNumNodeGroups()) - 1;
   
-  if (restarter.getNumDbNodes() < 2){
-    ctx->stopTest();
+  if ((restarter.getNumDbNodes() < 2) ||
+      (numNodesToRestart > restarter.getMaxConcurrentNodeFailures()))
+  {
+    printf("SKIPPING the test since the test attempts to restart more than"
+           " half of the data nodes");
     return NDBT_OK;
   }
   // This should really wait for applier to start...10s is likely enough
@@ -2745,7 +2750,6 @@ runBug33793(NDBT_Context* ctx, NDBT_Step* step)
         int val2[] = { DumpStateOrd::CmvmiSetRestartOnErrorInsert, 1 };
         if (restarter.dumpStateOneNode(id, val2, 2))
           return NDBT_FAILED;
-        break;
       }
     }
     printf("\n"); fflush(stdout);

@@ -465,7 +465,7 @@ int vio_shutdown(Vio *vio) {
 #ifdef USE_PPOLL_IN_VIO
     if (vio->thread_id != 0 && vio->poll_shutdown_flag.test_and_set()) {
       // Send signal to wake up from poll.
-      if (pthread_kill(vio->thread_id, SIGUSR1) == 0)
+      if (pthread_kill(vio->thread_id, SIGALRM) == 0)
         vio_wait_until_woken(vio);
       else
         perror("Error in pthread_kill");
@@ -929,16 +929,16 @@ int vio_io_wait(Vio *vio, enum enum_vio_io_event event, int timeout) {
   /* The requested I/O event is ready? */
   switch (event) {
     case VIO_IO_EVENT_READ:
-      ret = MY_TEST(FD_ISSET(fd, &readfds));
+      ret = (FD_ISSET(fd, &readfds) ? 1 : 0);
       break;
     case VIO_IO_EVENT_WRITE:
     case VIO_IO_EVENT_CONNECT:
-      ret = MY_TEST(FD_ISSET(fd, &writefds));
+      ret = (FD_ISSET(fd, &writefds) ? 1 : 0);
       break;
   }
 
   /* Error conditions pending? */
-  ret |= MY_TEST(FD_ISSET(fd, &exceptfds));
+  ret |= (FD_ISSET(fd, &exceptfds) ? 1 : 0);
 
   /* Not a timeout, ensure that a condition was met. */
   DBUG_ASSERT(ret);
@@ -1092,7 +1092,7 @@ bool vio_socket_connect(Vio *vio, struct sockaddr *addr, socklen_t len,
 #else
       errno = error;
 #endif
-      ret = MY_TEST(error);
+      ret = (error != 0);
     }
   }
 
@@ -1104,7 +1104,7 @@ bool vio_socket_connect(Vio *vio, struct sockaddr *addr, socklen_t len,
   if (nonblocking && wait) {
     return false;
   } else {
-    return MY_TEST(ret);
+    return (ret != 0);
   }
 }
 

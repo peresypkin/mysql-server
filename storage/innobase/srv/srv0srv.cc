@@ -107,6 +107,9 @@ bool srv_downgrade_logs = false;
 bool srv_upgrade_old_undo_found = false;
 #endif /* INNODB_DD_TABLE */
 
+/* Revert to old partition file name if upgrade fails. */
+bool srv_downgrade_partition_files = false;
+
 /* The following is the maximum allowed duration of a lock wait. */
 ulong srv_fatal_semaphore_wait_threshold = 600;
 
@@ -122,6 +125,10 @@ const char *srv_main_thread_op_info = "";
 names, where the file name itself may also contain a path */
 
 char *srv_data_home = NULL;
+
+/* The innodb_directories variable value. This a list of directories
+deliminated by ';', i.e the FIL_PATH_SEPARATOR. */
+char *srv_innodb_directories = NULL;
 
 /** Undo tablespace directories.  This can be multiple paths
 separated by ';' and can also be absolute paths. */
@@ -550,6 +557,11 @@ static ulint srv_n_rows_inserted_old = 0;
 static ulint srv_n_rows_updated_old = 0;
 static ulint srv_n_rows_deleted_old = 0;
 static ulint srv_n_rows_read_old = 0;
+
+static ulint srv_n_system_rows_inserted_old = 0;
+static ulint srv_n_system_rows_updated_old = 0;
+static ulint srv_n_system_rows_deleted_old = 0;
+static ulint srv_n_system_rows_read_old = 0;
 #endif /* !UNIV_HOTBACKUP */
 
 ulint srv_truncated_status_writes = 0;
@@ -577,12 +589,6 @@ ib_mutex_t srv_monitor_file_mutex;
 
 /** Temporary file for innodb monitor output */
 FILE *srv_monitor_file;
-/** Mutex for locking srv_dict_tmpfile. Not created if srv_read_only_mode.
-This mutex has a very high rank; threads reserving it should not
-be holding any InnoDB latches. */
-ib_mutex_t srv_dict_tmpfile_mutex;
-/** Temporary file for output from the data dictionary */
-FILE *srv_dict_tmpfile;
 /** Mutex for locking srv_misc_tmpfile. Not created if srv_read_only_mode.
 This mutex has a very low rank; threads reserving it should not
 acquire any further latches or sleep before releasing this one. */
@@ -1251,6 +1257,11 @@ static void srv_refresh_innodb_monitor_stats(void) {
   srv_n_rows_deleted_old = srv_stats.n_rows_deleted;
   srv_n_rows_read_old = srv_stats.n_rows_read;
 
+  srv_n_system_rows_inserted_old = srv_stats.n_system_rows_inserted;
+  srv_n_system_rows_updated_old = srv_stats.n_system_rows_updated;
+  srv_n_system_rows_deleted_old = srv_stats.n_system_rows_deleted;
+  srv_n_system_rows_read_old = srv_stats.n_system_rows_read;
+
   mutex_exit(&srv_innodb_monitor_mutex);
 }
 
@@ -1446,10 +1457,36 @@ ibool srv_printf_innodb_monitor(
       ((ulint)srv_stats.n_rows_deleted - srv_n_rows_deleted_old) / time_elapsed,
       ((ulint)srv_stats.n_rows_read - srv_n_rows_read_old) / time_elapsed);
 
+  fprintf(file,
+          "Number of system rows inserted " ULINTPF ", updated " ULINTPF
+          ", deleted " ULINTPF ", read " ULINTPF "\n",
+          (ulint)srv_stats.n_system_rows_inserted,
+          (ulint)srv_stats.n_system_rows_updated,
+          (ulint)srv_stats.n_system_rows_deleted,
+          (ulint)srv_stats.n_system_rows_read);
+  fprintf(
+      file,
+      "%.2f inserts/s, %.2f updates/s,"
+      " %.2f deletes/s, %.2f reads/s\n",
+      ((ulint)srv_stats.n_system_rows_inserted -
+       srv_n_system_rows_inserted_old) /
+          time_elapsed,
+      ((ulint)srv_stats.n_system_rows_updated - srv_n_system_rows_updated_old) /
+          time_elapsed,
+      ((ulint)srv_stats.n_system_rows_deleted - srv_n_system_rows_deleted_old) /
+          time_elapsed,
+      ((ulint)srv_stats.n_system_rows_read - srv_n_system_rows_read_old) /
+          time_elapsed);
+
   srv_n_rows_inserted_old = srv_stats.n_rows_inserted;
   srv_n_rows_updated_old = srv_stats.n_rows_updated;
   srv_n_rows_deleted_old = srv_stats.n_rows_deleted;
   srv_n_rows_read_old = srv_stats.n_rows_read;
+
+  srv_n_system_rows_inserted_old = srv_stats.n_system_rows_inserted;
+  srv_n_system_rows_updated_old = srv_stats.n_system_rows_updated;
+  srv_n_system_rows_deleted_old = srv_stats.n_system_rows_deleted;
+  srv_n_system_rows_read_old = srv_stats.n_system_rows_read;
 
   fputs(
       "----------------------------\n"
@@ -1580,6 +1617,18 @@ void srv_export_innodb_status(void) {
   export_vars.innodb_rows_updated = srv_stats.n_rows_updated;
 
   export_vars.innodb_rows_deleted = srv_stats.n_rows_deleted;
+
+  export_vars.innodb_system_rows_read = srv_stats.n_system_rows_read;
+
+  export_vars.innodb_system_rows_inserted = srv_stats.n_system_rows_inserted;
+
+  export_vars.innodb_system_rows_updated = srv_stats.n_system_rows_updated;
+
+  export_vars.innodb_system_rows_deleted = srv_stats.n_system_rows_deleted;
+
+  export_vars.innodb_sampled_pages_read = srv_stats.n_sampled_pages_read;
+
+  export_vars.innodb_sampled_pages_skipped = srv_stats.n_sampled_pages_skipped;
 
   export_vars.innodb_num_open_files = fil_n_file_opened;
 
