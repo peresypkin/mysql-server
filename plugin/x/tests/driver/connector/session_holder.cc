@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2017, 2020, Oracle and/or its affiliates. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License, version 2.0,
@@ -24,8 +24,8 @@
 
 #include "plugin/x/tests/driver/connector/session_holder.h"
 
-#include "my_dbug.h"
-#include "template_utils.h"
+#include "my_dbug.h"         // NOLINT(build/include_subdir)
+#include "template_utils.h"  // NOLINT(build/include_subdir)
 
 #include "plugin/x/protocol/stream/compression/compression_algorithm_lz4.h"
 #include "plugin/x/protocol/stream/compression/compression_algorithm_zlib.h"
@@ -56,22 +56,22 @@ Session_holder::Session_holder(std::unique_ptr<xcl::XSession> session,
     : m_session(std::move(session)), m_console(console), m_options(options) {}
 
 bool Session_holder::enable_compression(
-    const xcl::Compression_algorithm algorithm) {
+    const xcl::Compression_algorithm algorithm, const int64_t level) {
   m_algorithm.reset();
 
-  get_session()->get_protocol().use_compression(algorithm);
+  get_session()->get_protocol().use_compression(algorithm, level);
 
   switch (algorithm) {
     case xcl::Compression_algorithm::k_lz4:
-      m_algorithm.reset(new protocol::Compression_algorithm_lz4());
+      m_algorithm.reset(new protocol::Compression_algorithm_lz4(level));
       break;
 
     case xcl::Compression_algorithm::k_deflate:
-      m_algorithm.reset(new protocol::Compression_algorithm_zlib());
+      m_algorithm.reset(new protocol::Compression_algorithm_zlib(level));
       break;
 
     case xcl::Compression_algorithm::k_zstd:
-      m_algorithm.reset(new protocol::Compression_algorithm_zstd());
+      m_algorithm.reset(new protocol::Compression_algorithm_zstd(level));
       break;
 
     default:
@@ -207,7 +207,23 @@ void Session_holder::setup_compression() {
   if (error)
     throw xcl::XError{
         CR_X_UNSUPPORTED_OPTION_VALUE,
-        "Unsupported value for \"Compression-max-combine-messages\" option"};
+        "Unsupported value for \"compression-max-combine-messages\" option"};
+
+  if (m_options.compression_level.has_value()) {
+    error = m_session->set_mysql_option(
+        Mysqlx_option::Compression_level_server,
+        static_cast<int64_t>(m_options.compression_level.value()));
+    if (error)
+      throw xcl::XError{CR_X_UNSUPPORTED_OPTION_VALUE,
+                        "Unsupported value for \"compression-level\" option"};
+
+    error = m_session->set_mysql_option(
+        Mysqlx_option::Compression_level_client,
+        static_cast<int64_t>(m_options.compression_level.value()));
+    if (error)
+      throw xcl::XError{CR_X_UNSUPPORTED_OPTION_VALUE,
+                        "Unsupported value for \"compression-level\" option"};
+  }
 }
 
 void Session_holder::setup_ssl() {
@@ -387,5 +403,9 @@ xcl::Handler_result Session_holder::dump_notices(const xcl::XProtocol *protocol,
 
 void Session_holder::print_message(const std::string &direction,
                                    const xcl::XProtocol::Message &msg) {
+#if (defined(GOOGLE_PROTOBUF_VERSION) && GOOGLE_PROTOBUF_VERSION > 3000000)
+  m_console.print(direction, msg.ByteSizeLong() + 1, " ", msg);
+#else
   m_console.print(direction, msg.ByteSize() + 1, " ", msg);
+#endif
 }

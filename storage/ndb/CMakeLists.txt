@@ -1,4 +1,4 @@
-# Copyright (c) 2008, 2019, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2008, 2020, Oracle and/or its affiliates. All rights reserved.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License, version 2.0,
@@ -44,6 +44,7 @@ SET(NDBCLUSTER_SOURCES
   plugin/ha_ndb_index_stat.cc
   plugin/ha_ndb_ddl_fk.cc
   plugin/ha_ndbinfo.cc
+  plugin/ha_ndbinfo_sql.cc
   plugin/ndb_local_connection.cc
   plugin/ndb_share.cc
   plugin/ndb_thd.cc
@@ -93,6 +94,12 @@ SET(NDBCLUSTER_SOURCES
   plugin/ndb_sql_metadata_table.cc
   plugin/ndb_stored_grants.cc
   plugin/ndb_dd_fk.cc
+  plugin/ndb_pfs_init.cc
+  plugin/ndb_pfs_table.cc
+  plugin/ndb_sync_pending_objects_table.cc
+  plugin/ndb_sync_excluded_objects_table.cc
+  plugin/ndb_dd_sync.cc
+  plugin/ndb_upgrade_util.cc
 )
 
 # Include directories used when building ha_ndbcluster
@@ -124,10 +131,8 @@ IF(MY_COMPILER_IS_GNU_OR_CLANG)
   STRING_APPEND(CMAKE_CXX_FLAGS " -fno-strict-aliasing")
 ENDIF()
 
-IF(CMAKE_SIZEOF_VOID_P EQUAL 4)
-  MESSAGE(STATUS "Building NDB 32-bit")
-ELSE()
-  MESSAGE(STATUS "Building NDB 64-bit")
+IF(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+  MESSAGE(FATAL_ERROR "Only 64-bit build of NDB is supported")
 ENDIF()
 
 INCLUDE(${CMAKE_CURRENT_SOURCE_DIR}/ndb_configure.cmake)

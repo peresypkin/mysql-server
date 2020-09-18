@@ -199,7 +199,7 @@ id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered
 2	DEPENDENT SUBQUERY	t2	NULL	ALL	NULL	NULL	NULL	NULL	3	33.33	Using where
 Warnings:
 Note	1276	Field or reference 'test.t1.a' of SELECT #2 was resolved in SELECT #1
-Note	1003	update `test`.`t1` set `test`.`t1`.`a` = 10 where <in_optimizer>(`test`.`t1`.`a`,<exists>(/* select#2 */ select 1 from `test`.`t2` where ((`test`.`t1`.`a` < 3) and (<cache>(`test`.`t1`.`a`) = `test`.`t2`.`b`))))
+Note	1003	update `test`.`t1` set `test`.`t1`.`a` = 10 where <in_optimizer>(`test`.`t1`.`a`,<exists>(/* select#2 */ select `test`.`t2`.`b` from `test`.`t2` where ((`test`.`t1`.`a` < 3) and (<cache>(`test`.`t1`.`a`) = `test`.`t2`.`b`))))
 FLUSH STATUS;
 FLUSH TABLES;
 Variable_name	Value
@@ -232,7 +232,7 @@ id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered
 1	PRIMARY	t2	NULL	ALL	NULL	NULL	NULL	NULL	3	100.00	NULL
 2	DEPENDENT SUBQUERY	t2	NULL	ALL	NULL	NULL	NULL	NULL	3	33.33	Using where
 Warnings:
-Note	1003	update `test`.`t1` join `test`.`t2` set `test`.`t1`.`a` = 10 where <in_optimizer>(`test`.`t1`.`a`,<exists>(/* select#2 */ select 1 from `test`.`t2` where ((`test`.`t2`.`b` < 3) and (<cache>(`test`.`t1`.`a`) = `test`.`t2`.`b`))))
+Note	1003	update `test`.`t1` join `test`.`t2` set `test`.`t1`.`a` = 10 where <in_optimizer>(`test`.`t1`.`a`,<exists>(/* select#2 */ select `test`.`t2`.`b` from `test`.`t2` where ((`test`.`t2`.`b` < 3) and (<cache>(`test`.`t1`.`a`) = `test`.`t2`.`b`))))
 FLUSH STATUS;
 FLUSH TABLES;
 Variable_name	Value
@@ -297,7 +297,7 @@ id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered
 1	UPDATE	t11	NULL	ALL	NULL	NULL	NULL	NULL	3	100.00	NULL
 2	DERIVED	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	No tables used
 Warnings:
-Note	1003	update `test`.`t1` `t11` join (/* select#2 */ select straight_join 1 AS `1`) `t12` set `test`.`t11`.`a` = (`test`.`t11`.`a` + 10)
+Note	1003	update `test`.`t1` `t11` join (/* select#2 */ select 1 AS `1`) `t12` set `test`.`t11`.`a` = (`test`.`t11`.`a` + 10)
 FLUSH STATUS;
 FLUSH TABLES;
 Variable_name	Value
@@ -306,13 +306,11 @@ FLUSH TABLES;
 Variable_name	Value
 # Status of "equivalent" SELECT query execution:
 Variable_name	Value
-Handler_read_first	1
 Handler_read_key	1
 Handler_read_rnd_next	5
 Handler_write	1
 # Status of testing query execution:
 Variable_name	Value
-Handler_read_first	1
 Handler_read_key	1
 Handler_read_rnd	3
 Handler_read_rnd_next	9
@@ -505,7 +503,6 @@ FLUSH TABLES;
 Variable_name	Value
 # Status of "equivalent" SELECT query execution:
 Variable_name	Value
-Handler_read_first	1
 Handler_read_key	1
 Handler_read_rnd_next	1
 # Status of testing query execution:
@@ -663,7 +660,7 @@ id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered
 1	UPDATE	t1	NULL	ALL	NULL	NULL	NULL	NULL	3	100.00	Using where
 2	DEPENDENT SUBQUERY	t2	NULL	ALL	NULL	NULL	NULL	NULL	3	33.33	Using where
 Warnings:
-Note	1003	update `test`.`t1` set `test`.`t1`.`a` = 10 where <in_optimizer>(`test`.`t1`.`a`,<exists>(/* select#2 */ select 1 from `test`.`t2` where (<cache>(`test`.`t1`.`a`) = `test`.`t2`.`a`)))
+Note	1003	update `test`.`t1` set `test`.`t1`.`a` = 10 where <in_optimizer>(`test`.`t1`.`a`,<exists>(/* select#2 */ select `test`.`t2`.`a` from `test`.`t2` where (<cache>(`test`.`t1`.`a`) = `test`.`t2`.`a`)))
 FLUSH STATUS;
 FLUSH TABLES;
 Variable_name	Value
@@ -696,7 +693,7 @@ id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered
 1	DELETE	t1	NULL	ALL	NULL	NULL	NULL	NULL	5	100.00	Using where
 2	DEPENDENT SUBQUERY	t2	NULL	ALL	NULL	NULL	NULL	NULL	5	20.00	Using where
 Warnings:
-Note	1003	delete from `test`.`t1` where <in_optimizer>(`test`.`t1`.`a1`,<exists>(/* select#2 */ select 1 from `test`.`t2` where ((`test`.`t2`.`a2` > 2) and (<cache>(`test`.`t1`.`a1`) = `test`.`t2`.`a2`))))
+Note	1003	delete from `test`.`t1` where <in_optimizer>(`test`.`t1`.`a1`,<exists>(/* select#2 */ select `test`.`t2`.`a2` from `test`.`t2` where ((`test`.`t2`.`a2` > 2) and (<cache>(`test`.`t1`.`a1`) = `test`.`t2`.`a2`))))
 FLUSH STATUS;
 FLUSH TABLES;
 Variable_name	Value
@@ -725,7 +722,7 @@ id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered
 1	DELETE	t1	NULL	ALL	NULL	NULL	NULL	NULL	5	100.00	Using where
 2	DEPENDENT SUBQUERY	t2	NULL	ALL	NULL	NULL	NULL	NULL	5	20.00	Using where
 Warnings:
-Note	1003	delete from `test`.`t1` where <in_optimizer>(`test`.`t1`.`a1`,<exists>(/* select#2 */ select 1 from `test`.`t2` where ((`test`.`t2`.`a2` > 2) and (<cache>(`test`.`t1`.`a1`) = `test`.`t2`.`a2`))))
+Note	1003	delete from `test`.`t1` where <in_optimizer>(`test`.`t1`.`a1`,<exists>(/* select#2 */ select `test`.`t2`.`a2` from `test`.`t2` where ((`test`.`t2`.`a2` > 2) and (<cache>(`test`.`t1`.`a1`) = `test`.`t2`.`a2`))))
 FLUSH STATUS;
 FLUSH TABLES;
 Variable_name	Value
@@ -873,7 +870,7 @@ EXPLAIN INSERT INTO t2 SELECT * FROM t1 JOIN t1 AS tt USING(i);
 id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
 1	INSERT	t2	NULL	ALL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 1	SIMPLE	t1	NULL	ALL	NULL	NULL	NULL	NULL	3	100.00	NULL
-1	SIMPLE	tt	NULL	ALL	NULL	NULL	NULL	NULL	3	33.33	Using where; Using join buffer (Block Nested Loop)
+1	SIMPLE	tt	NULL	ALL	NULL	NULL	NULL	NULL	3	33.33	Using where; Using join buffer (hash join)
 Warnings:
 Note	1003	insert into `test`.`t2` /* select#1 */ select `test`.`t1`.`i` AS `i` from `test`.`t1` join `test`.`t1` `tt` where (`test`.`tt`.`i` = `test`.`t1`.`i`)
 FLUSH STATUS;
@@ -1212,16 +1209,16 @@ Variable_name	Value
 Handler_read_key	5
 Handler_read_next	7
 Handler_read_rnd	4
-Sort_range	1
 Sort_rows	4
+Sort_scan	1
 # Status of testing query execution:
 Variable_name	Value
 Handler_delete	4
 Handler_read_key	5
 Handler_read_next	7
 Handler_read_rnd	8
-Sort_range	1
 Sort_rows	4
+Sort_scan	1
 
 DROP TABLE t1, t2;
 #36
@@ -1581,16 +1578,16 @@ Variable_name	Value
 Handler_read_key	5
 Handler_read_next	7
 Handler_read_rnd	4
-Sort_range	1
 Sort_rows	4
+Sort_scan	1
 # Status of testing query execution:
 Variable_name	Value
 Handler_read_key	5
 Handler_read_next	7
 Handler_read_rnd	8
 Handler_update	4
-Sort_range	1
 Sort_rows	4
+Sort_scan	1
 
 DROP TABLE t1, t2;
 #46
@@ -1736,8 +1733,8 @@ Handler_read_key	4
 Handler_read_next	2
 Handler_read_rnd	2
 Handler_update	2
-Sort_range	1
 Sort_rows	2
+Sort_scan	1
 
 #
 # query:  DELETE   FROM t1 WHERE c1_idx = 'y' ORDER BY pk DESC LIMIT 2
@@ -1766,8 +1763,8 @@ Handler_delete	2
 Handler_read_key	4
 Handler_read_next	2
 Handler_read_rnd	2
-Sort_range	1
 Sort_rows	2
+Sort_scan	1
 
 DROP TABLE t1;
 #50
@@ -1822,12 +1819,10 @@ FLUSH TABLES;
 Variable_name	Value
 # Status of "equivalent" SELECT query execution:
 Variable_name	Value
-Handler_read_first	1
 Handler_read_key	5
 Handler_read_rnd_next	4
 # Status of testing query execution:
 Variable_name	Value
-Handler_read_first	1
 Handler_read_key	5
 Handler_read_rnd_next	4
 
@@ -1849,12 +1844,10 @@ FLUSH TABLES;
 Variable_name	Value
 # Status of "equivalent" SELECT query execution:
 Variable_name	Value
-Handler_read_first	1
 Handler_read_key	5
 Handler_read_rnd_next	4
 # Status of testing query execution:
 Variable_name	Value
-Handler_read_first	1
 Handler_read_key	5
 Handler_read_rnd_next	4
 
@@ -2151,12 +2144,10 @@ FLUSH TABLES;
 Variable_name	Value
 # Status of "equivalent" SELECT query execution:
 Variable_name	Value
-Handler_read_first	1
 Handler_read_key	1
 Handler_read_rnd_next	1
 # Status of testing query execution:
 Variable_name	Value
-Handler_read_first	1
 Handler_read_key	2
 Handler_read_rnd_next	1
 
@@ -2355,11 +2346,11 @@ Variable_name	Value
 # Status of "equivalent" SELECT query execution:
 Variable_name	Value
 Handler_read_key	2
-Sort_range	1
+Sort_scan	1
 # Status of testing query execution:
 Variable_name	Value
 Handler_read_key	2
-Sort_range	1
+Sort_scan	1
 
 DROP TABLE t1;
 #

@@ -1,4 +1,4 @@
-/* Copyright (c) 2005, 2019, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2005, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -212,9 +212,9 @@ Item *convert_charset_partition_constant(Item *item, const CHARSET_INFO *cs) {
   const char *save_where = thd->where;
 
   item = item->safe_charset_converter(thd, cs);
-  context->table_list = NULL;
+  context->table_list = nullptr;
   thd->where = "convert character set partition constant";
-  if (!item || item->fix_fields(thd, (Item **)NULL)) item = NULL;
+  if (!item || item->fix_fields(thd, (Item **)nullptr)) item = nullptr;
   thd->where = save_where;
   context->table_list = save_list;
   return item;
@@ -287,7 +287,7 @@ static bool partition_default_handling(TABLE *table, partition_info *part_info,
       part_info->num_subparts = num_parts / part_info->num_parts;
     }
   }
-  part_info->set_up_defaults_for_partitioning(part_handler, NULL, 0U);
+  part_info->set_up_defaults_for_partitioning(part_handler, nullptr, 0U);
   return false;
 }
 
@@ -437,7 +437,7 @@ static bool set_up_field_array(TABLE *table, bool is_sub_part) {
 
   ptr = table->field;
   while ((field = *(ptr++))) {
-    if (field->flags & GET_FIXED_FIELDS_FLAG) num_fields++;
+    if (field->is_flag_set(GET_FIXED_FIELDS_FLAG)) num_fields++;
   }
   if (num_fields > MAX_REF_PARTS) {
     const char *err_str;
@@ -463,9 +463,9 @@ static bool set_up_field_array(TABLE *table, bool is_sub_part) {
   }
   ptr = table->field;
   while ((field = *(ptr++))) {
-    if (field->flags & GET_FIXED_FIELDS_FLAG) {
-      field->flags &= ~GET_FIXED_FIELDS_FLAG;
-      field->flags |= FIELD_IN_PART_FUNC_FLAG;
+    if (field->is_flag_set(GET_FIXED_FIELDS_FLAG)) {
+      field->clear_flag(GET_FIXED_FIELDS_FLAG);
+      field->set_flag(FIELD_IN_PART_FUNC_FLAG);
       if (likely(!result)) {
         if (!is_sub_part && part_info->column_list) {
           List_iterator<char> it(part_info->part_field_list);
@@ -503,14 +503,14 @@ static bool set_up_field_array(TABLE *table, bool is_sub_part) {
             performance reasons.
         */
 
-        if (unlikely(field->flags & BLOB_FLAG)) {
+        if (field->is_flag_set(BLOB_FLAG)) {
           my_error(ER_BLOB_FIELD_IN_PART_FUNC_ERROR, MYF(0));
           result = true;
         }
       }
     }
   }
-  field_array[num_fields] = 0;
+  field_array[num_fields] = nullptr;
   if (!is_sub_part) {
     part_info->part_field_array = field_array;
     part_info->num_part_fields = num_fields;
@@ -557,7 +557,7 @@ static bool create_full_part_field_array(THD *thd, TABLE *table,
     uint num_part_fields = 0, size_field_array;
     ptr = table->field;
     while ((field = *(ptr++))) {
-      if (field->flags & FIELD_IN_PART_FUNC_FLAG) num_part_fields++;
+      if (field->is_flag_set(FIELD_IN_PART_FUNC_FLAG)) num_part_fields++;
     }
     size_field_array = (num_part_fields + 1) * sizeof(Field *);
     field_array = (Field **)sql_calloc(size_field_array);
@@ -569,10 +569,10 @@ static bool create_full_part_field_array(THD *thd, TABLE *table,
     num_part_fields = 0;
     ptr = table->field;
     while ((field = *(ptr++))) {
-      if (field->flags & FIELD_IN_PART_FUNC_FLAG)
+      if (field->is_flag_set(FIELD_IN_PART_FUNC_FLAG))
         field_array[num_part_fields++] = field;
     }
-    field_array[num_part_fields] = 0;
+    field_array[num_part_fields] = nullptr;
     part_info->full_part_field_array = field_array;
     part_info->num_full_part_fields = num_part_fields;
   }
@@ -601,7 +601,7 @@ static bool create_full_part_field_array(THD *thd, TABLE *table,
   */
   if ((ptr = part_info->full_part_field_array))
     for (; *ptr; ptr++)
-      bitmap_set_bit(&part_info->full_part_field_set, (*ptr)->field_index);
+      bitmap_set_bit(&part_info->full_part_field_set, (*ptr)->field_index());
 
 end:
   return result;
@@ -633,7 +633,7 @@ static void clear_indicator_in_key_fields(KEY *key_info) {
   KEY_PART_INFO *key_part;
   uint key_parts = key_info->user_defined_key_parts, i;
   for (i = 0, key_part = key_info->key_part; i < key_parts; i++, key_part++)
-    key_part->field->flags &= (~GET_FIXED_FIELDS_FLAG);
+    key_part->field->clear_flag(GET_FIXED_FIELDS_FLAG);
 }
 
 /*
@@ -651,7 +651,7 @@ static void set_indicator_in_key_fields(KEY *key_info) {
   KEY_PART_INFO *key_part;
   uint key_parts = key_info->user_defined_key_parts, i;
   for (i = 0, key_part = key_info->key_part; i < key_parts; i++, key_part++)
-    key_part->field->flags |= GET_FIXED_FIELDS_FLAG;
+    key_part->field->set_flag(GET_FIXED_FIELDS_FLAG);
 }
 
 /*
@@ -680,7 +680,7 @@ static void check_fields_in_PF(Field **ptr, bool *all_fields,
   }
   do {
     /* Check if the field of the PF is part of the current key investigated */
-    if ((*ptr)->flags & GET_FIXED_FIELDS_FLAG)
+    if ((*ptr)->is_flag_set(GET_FIXED_FIELDS_FLAG))
       *some_fields = true;
     else
       *all_fields = false;
@@ -704,7 +704,7 @@ static void clear_field_flag(TABLE *table) {
   DBUG_TRACE;
 
   for (ptr = table->field; *ptr; ptr++)
-    (*ptr)->flags &= (~GET_FIXED_FIELDS_FLAG);
+    (*ptr)->clear_flag(GET_FIXED_FIELDS_FLAG);
 }
 
 /*
@@ -739,8 +739,8 @@ static bool handle_list_of_fields(List_iterator<char> it, TABLE *table,
   while ((field_name = it++)) {
     is_list_empty = false;
     Field *field = find_field_in_table_sef(table, field_name);
-    if (likely(field != 0))
-      field->flags |= GET_FIXED_FIELDS_FLAG;
+    if (likely(field != nullptr))
+      field->set_flag(GET_FIXED_FIELDS_FLAG);
     else {
       my_error(ER_FIELD_NOT_FOUND_PART_ERROR, MYF(0));
       clear_field_flag(table);
@@ -758,7 +758,7 @@ static bool handle_list_of_fields(List_iterator<char> it, TABLE *table,
       */
       for (i = 0; i < num_key_parts; i++) {
         Field *field = table->key_info[primary_key].key_part[i].field;
-        field->flags |= GET_FIXED_FIELDS_FLAG;
+        field->set_flag(GET_FIXED_FIELDS_FLAG);
       }
     } else {
       if (table->s->db_type()->partition_flags &&
@@ -922,15 +922,18 @@ static bool fix_fields_part_func(THD *thd, Item *func_expr, TABLE *table,
   LEX *old_lex = thd->lex;
   LEX lex;
   SELECT_LEX_UNIT unit(CTX_NONE);
-  SELECT_LEX select(nullptr, nullptr);
+  SELECT_LEX select(thd->mem_root, nullptr, nullptr);
   lex.new_static_query(&unit, &select);
 
   DBUG_TRACE;
 
   if (init_lex_with_single_table(thd, table, &lex)) goto end;
 
-  func_expr->walk(&Item::change_context_processor, enum_walk::POSTFIX,
-                  (uchar *)&lex.select_lex->context);
+  {
+    Item_ident::Change_context ctx(&lex.select_lex->context);
+    func_expr->walk(&Item::change_context_processor, enum_walk::POSTFIX,
+                    (uchar *)&ctx);
+  }
   thd->where = "partition function";
   /*
     In execution we must avoid the use of thd->change_item_tree since
@@ -978,7 +981,7 @@ static bool fix_fields_part_func(THD *thd, Item *func_expr, TABLE *table,
     in future so that we always throw an error.
   */
   if (func_expr->walk(&Item::check_valid_arguments_processor,
-                      enum_walk::POSTFIX, NULL)) {
+                      enum_walk::POSTFIX, nullptr)) {
     if (is_create_table_ind) {
       my_error(ER_WRONG_EXPR_IN_PARTITION_FUNC_ERROR, MYF(0));
       goto end;
@@ -993,7 +996,9 @@ static bool fix_fields_part_func(THD *thd, Item *func_expr, TABLE *table,
 end:
   end_lex_with_single_table(thd, table, old_lex);
 #if !defined(DBUG_OFF)
-  func_expr->walk(&Item::change_context_processor, enum_walk::POSTFIX, NULL);
+  Item_ident::Change_context nul_ctx(nullptr);
+  func_expr->walk(&Item::change_context_processor, enum_walk::POSTFIX,
+                  (uchar *)&nul_ctx);
 #endif
   return result;
 }
@@ -1160,7 +1165,7 @@ static bool set_up_partition_bitmaps(partition_info *part_info) {
     return true;
 
   part_info->bitmaps_are_initialized = true;
-  part_info->set_partition_bitmaps(NULL);
+  part_info->set_partition_bitmaps(nullptr);
   return false;
 }
 
@@ -1274,8 +1279,8 @@ static void set_up_partition_func_pointers(partition_info *part_info) {
     }
   } else /* No subpartitioning */
   {
-    part_info->get_part_partition_id = NULL;
-    part_info->get_subpartition_id = NULL;
+    part_info->get_part_partition_id = nullptr;
+    part_info->get_subpartition_id = nullptr;
     if (part_info->part_type == partition_type::RANGE) {
       if (part_info->column_list)
         part_info->get_partition_id = get_partition_id_range_col;
@@ -1813,7 +1818,7 @@ void truncate_partition_filename(MEM_ROOT *root, const char **path) {
       for (const char *pound = strchr(last_slash, '#'); pound;
            pound = strchr(pound + 1, '#')) {
         if ((pound[1] == 'P' || pound[1] == 'p') && pound[2] == '#') {
-          if (root == NULL) {
+          if (root == nullptr) {
             char *p = const_cast<char *>(last_slash);
             *p = '\0';
           } else {
@@ -1867,7 +1872,7 @@ static int add_keyword_path(File fptr, const char *keyword, const char *path) {
   If the partition file name with its "#P#" identifier
   is found after the last slash, truncate that filename.
   */
-  truncate_partition_filename(NULL, temp_path_p);
+  truncate_partition_filename(nullptr, temp_path_p);
 
   err += add_quoted_string(fptr, temp_path);
 
@@ -1900,7 +1905,7 @@ static int add_keyword_int(File fptr, const char *keyword, longlong num) {
 
 static int add_engine(File fptr, handlerton *engine_type) {
   const char *engine_str = ha_resolve_storage_engine_name(engine_type);
-  DBUG_ASSERT(engine_type != NULL);
+  DBUG_ASSERT(engine_type != nullptr);
   DBUG_PRINT("info", ("ENGINE: %s", engine_str));
   int err = add_string(fptr, "ENGINE = ");
   return err + add_string(fptr, engine_str);
@@ -2023,7 +2028,7 @@ static Create_field *get_sql_field(const char *field_name,
       return sql_field;
     }
   }
-  return NULL;
+  return nullptr;
 }
 
 int expr_to_string(String *val_conv, Item *item_expr, Field *field,
@@ -2055,7 +2060,7 @@ int expr_to_string(String *val_conv, Item *item_expr, Field *field,
     if (need_cs_check)
       field_cs = get_sql_field_charset(sql_field, create_info);
     else
-      field_cs = NULL;
+      field_cs = nullptr;
   } else {
     result_type = field->result_type();
     if (check_part_field(field->real_type(), field->field_name, &result_type,
@@ -2065,7 +2070,7 @@ int expr_to_string(String *val_conv, Item *item_expr, Field *field,
     if (need_cs_check)
       field_cs = field->charset();
     else
-      field_cs = NULL;
+      field_cs = nullptr;
   }
   if (result_type != item_expr->result_type()) {
     my_error(ER_WRONG_TYPE_COLUMN_VALUE_ERROR, MYF(0));
@@ -2117,8 +2122,9 @@ static int add_column_list_values(File fptr, partition_info *part_info,
         err += add_string(fptr, "NULL");
       } else {
         String val_conv;
-        err += expr_to_string(&val_conv, item_expr,
-                              part_info->part_field_array[i], NULL, NULL, NULL);
+        err +=
+            expr_to_string(&val_conv, item_expr, part_info->part_field_array[i],
+                           nullptr, nullptr, nullptr);
         err += add_string_object(fptr, &val_conv);
       }
     }
@@ -2236,22 +2242,22 @@ static char *get_file_content(File fptr, uint *buf_length, bool use_sql_alloc) {
   my_off_t buffer_length;
   char *buf;
   buffer_length = mysql_file_seek(fptr, 0L, MY_SEEK_END, MYF(0));
-  if (unlikely(buffer_length == MY_FILEPOS_ERROR)) return NULL;
+  if (unlikely(buffer_length == MY_FILEPOS_ERROR)) return nullptr;
   if (unlikely(mysql_file_seek(fptr, 0L, MY_SEEK_SET, MYF(0)) ==
                MY_FILEPOS_ERROR))
-    return NULL;
+    return nullptr;
   *buf_length = (uint)buffer_length;
   if (use_sql_alloc)
     buf = (char *)(*THR_MALLOC)->Alloc(*buf_length + 1);
   else
     buf = (char *)my_malloc(key_memory_partition_syntax_buffer, *buf_length + 1,
                             MYF(MY_WME));
-  if (!buf) return NULL;
+  if (!buf) return nullptr;
 
   if (unlikely(
           mysql_file_read(fptr, (uchar *)buf, *buf_length, MYF(MY_FNABP)))) {
     if (!use_sql_alloc) my_free(buf);
-    buf = NULL;
+    buf = nullptr;
   } else
     buf[*buf_length] = 0;
   return buf;
@@ -2304,11 +2310,11 @@ char *generate_partition_syntax(partition_info *part_info, uint *buf_length,
   int err = 0;
   List_iterator<partition_element> part_it(part_info->partitions);
   File fptr;
-  char *buf = NULL;  // Return buffer
+  char *buf = nullptr;  // Return buffer
   DBUG_TRACE;
 
   if (!(fptr = mysql_tmpfile("psy"))) {
-    return NULL;
+    return nullptr;
   }
   err += add_space(fptr);
   err += add_partition_by(fptr);
@@ -2332,7 +2338,7 @@ char *generate_partition_syntax(partition_info *part_info, uint *buf_length,
       DBUG_ASSERT(0);
       /* We really shouldn't get here, no use in continuing from here */
       my_error(ER_OUT_OF_RESOURCES, MYF(ME_FATALERROR));
-      return NULL;
+      return nullptr;
   }
   if (part_info->part_func_len) {
     err += add_begin_parenthesis(fptr);
@@ -2455,7 +2461,7 @@ char *generate_partition_syntax(partition_info *part_info, uint *buf_length,
   if (err) goto close_file;
   buf = get_file_content(fptr, buf_length, use_sql_alloc);
 close_file:
-  if (buf == NULL) {
+  if (buf == nullptr) {
     my_error(ER_INTERNAL_ERROR, MYF(0), "Failed to generate partition syntax");
   }
   mysql_file_close(fptr, MYF(0));
@@ -2486,7 +2492,7 @@ bool partition_key_modified(TABLE *table, const MY_BITMAP *fields) {
       (table->s->db_type()->partition_flags() & HA_CAN_UPDATE_PARTITION_KEY))
     return false;
   for (fld = part_info->full_part_field_array; *fld; fld++)
-    if (bitmap_is_set(fields, (*fld)->field_index)) return true;
+    if (bitmap_is_set(fields, (*fld)->field_index())) return true;
   return false;
 }
 
@@ -2670,9 +2676,9 @@ static void copy_to_part_field_buffers(Field **ptr, uchar **field_bufs,
                                        uchar **restore_ptr) {
   Field *field;
   while ((field = *(ptr++))) {
-    *restore_ptr = field->ptr;
+    *restore_ptr = field->field_ptr();
     restore_ptr++;
-    if (!field->maybe_null() || !field->is_null()) {
+    if (!field->is_null()) {
       const CHARSET_INFO *cs = field->charset();
       uint max_len = field->pack_length();
       uint data_len = field->data_length();
@@ -2685,17 +2691,17 @@ static void copy_to_part_field_buffers(Field **ptr, uchar **field_bufs,
          the strnxfrm method to normalise the string.
        */
       if (field->type() == MYSQL_TYPE_VARCHAR) {
-        uint len_bytes = ((Field_varstring *)field)->length_bytes;
-        my_strnxfrm(cs, field_buf + len_bytes, max_len, field->ptr + len_bytes,
+        uint len_bytes = field->get_length_bytes();
+        my_strnxfrm(cs, field_buf + len_bytes, max_len, field->data_ptr(),
                     data_len);
         if (len_bytes == 1)
           *field_buf = (uchar)data_len;
         else
           int2store(field_buf, data_len);
       } else {
-        my_strnxfrm(cs, field_buf, max_len, field->ptr, max_len);
+        my_strnxfrm(cs, field_buf, max_len, field->field_ptr(), max_len);
       }
-      field->ptr = field_buf;
+      field->set_field_ptr(field_buf);
     }
     field_bufs++;
   }
@@ -2715,7 +2721,7 @@ static void copy_to_part_field_buffers(Field **ptr, uchar **field_bufs,
 static void restore_part_field_pointers(Field **ptr, uchar **restore_ptr) {
   Field *field;
   while ((field = *(ptr++))) {
-    field->ptr = *restore_ptr;
+    field->set_field_ptr(*restore_ptr);
     restore_ptr++;
   }
   return;
@@ -3372,9 +3378,9 @@ static bool set_PF_fields_in_key(KEY *key_info, uint key_length) {
     }
     if (key_length < key_part->length) break;
     key_length -= key_part->length;
-    if (key_part->field->flags & FIELD_IN_PART_FUNC_FLAG) {
+    if (key_part->field->is_flag_set(FIELD_IN_PART_FUNC_FLAG)) {
       found_part_field = true;
-      key_part->field->flags |= GET_FIXED_FIELDS_FLAG;
+      key_part->field->set_flag(GET_FIXED_FIELDS_FLAG);
     }
   }
   return found_part_field;
@@ -3398,7 +3404,7 @@ static bool check_part_func_bound(Field **ptr) {
   DBUG_TRACE;
 
   for (; *ptr; ptr++) {
-    if (!((*ptr)->flags & GET_FIXED_FIELDS_FLAG)) {
+    if (!(*ptr)->is_flag_set(GET_FIXED_FIELDS_FLAG)) {
       result = false;
       break;
     }
@@ -3687,7 +3693,7 @@ void get_partition_set(const TABLE *table, uchar *buf, const uint index,
   uint i, part_id;
   uint sub_part = num_parts;
   uint32 part_part = num_parts;
-  KEY *key_info = NULL;
+  KEY *key_info = nullptr;
   bool found_part_field = false;
   DBUG_TRACE;
 
@@ -3890,7 +3896,7 @@ bool mysql_unpack_partition(THD *thd, char *part_buf, uint part_info_len,
   LEX *old_lex = thd->lex;
   LEX lex;
   SELECT_LEX_UNIT unit(CTX_NONE);
-  SELECT_LEX select(nullptr, nullptr);
+  SELECT_LEX select(thd->mem_root, nullptr, nullptr);
   lex.new_static_query(&unit, &select);
 
   sql_digest_state *parent_digest = thd->m_digest;
@@ -3919,9 +3925,9 @@ bool mysql_unpack_partition(THD *thd, char *part_buf, uint part_info_len,
   *work_part_info_used = false;
   DBUG_PRINT("info", ("Parse: %s", part_buf));
 
-  thd->m_digest = NULL;
-  thd->m_statement_psi = NULL;
-  if (parse_sql(thd, &parser_state, NULL) ||
+  thd->m_digest = nullptr;
+  thd->m_statement_psi = nullptr;
+  if (parse_sql(thd, &parser_state, nullptr) ||
       parser_state.result->fix_parser_data(thd)) {
     thd->free_items();
     thd->m_digest = parent_digest;
@@ -3972,7 +3978,7 @@ bool mysql_unpack_partition(THD *thd, char *part_buf, uint part_info_len,
   table->part_info = part_info;
   part_info->table = table;
   part_handler = table->file->get_partition_handler();
-  DBUG_ASSERT(part_handler != NULL);
+  DBUG_ASSERT(part_handler != nullptr);
   part_handler->set_part_info(part_info, true);
   if (!part_info->default_engine_type)
     part_info->default_engine_type = default_db_type;
@@ -3991,8 +3997,8 @@ bool mysql_unpack_partition(THD *thd, char *part_buf, uint part_info_len,
     */
     size_t part_func_len = part_info->part_func_len;
     size_t subpart_func_len = part_info->subpart_func_len;
-    char *part_func_string = NULL;
-    char *subpart_func_string = NULL;
+    char *part_func_string = nullptr;
+    char *subpart_func_string = nullptr;
     /*
       TODO: Verify that it really should be allocated on the thd?
       Or simply remove it and use part_expr->print() instead?
@@ -4302,8 +4308,8 @@ uint prep_alter_part_table(THD *thd, TABLE *table, Alter_info *alter_info,
     partition_info *alt_part_info = thd->work_part_info;
     uint flags = 0;
     bool is_last_partition_reorged = false;
-    part_elem_value *tab_max_elem_val = NULL;
-    part_elem_value *alt_max_elem_val = NULL;
+    part_elem_value *tab_max_elem_val = nullptr;
+    part_elem_value *alt_max_elem_val = nullptr;
     longlong tab_max_range = 0, alt_max_range = 0;
     Partition_handler *part_handler = table->file->get_partition_handler();
 
@@ -4502,7 +4508,7 @@ uint prep_alter_part_table(THD *thd, TABLE *table, Alter_info *alter_info,
       alt_part_info->part_type = tab_part_info->part_type;
       alt_part_info->subpart_type = tab_part_info->subpart_type;
       if (alt_part_info->set_up_defaults_for_partitioning(
-              part_handler, 0ULL, tab_part_info->num_parts)) {
+              part_handler, nullptr, tab_part_info->num_parts)) {
         goto err;
       }
       /*
@@ -4866,7 +4872,7 @@ uint prep_alter_part_table(THD *thd, TABLE *table, Alter_info *alter_info,
       DBUG_ASSERT(!alt_part_info->use_default_partitions);
       /* We specified partitions explicitly so don't use defaults anymore. */
       tab_part_info->use_default_partitions = false;
-      if (alt_part_info->set_up_defaults_for_partitioning(part_handler, 0ULL,
+      if (alt_part_info->set_up_defaults_for_partitioning(part_handler, nullptr,
                                                           0)) {
         goto err;
       }
@@ -4979,8 +4985,8 @@ uint prep_alter_part_table(THD *thd, TABLE *table, Alter_info *alter_info,
         tab_part_info->use_default_subpartitions = false;
         tab_part_info->use_default_num_subpartitions = false;
       }
-      if (tab_part_info->check_partition_info(thd, (handlerton **)NULL,
-                                              table->file, 0ULL, true)) {
+      if (tab_part_info->check_partition_info(thd, (handlerton **)nullptr,
+                                              table->file, nullptr, true)) {
         goto err;
       }
       /*
@@ -5094,7 +5100,7 @@ uint prep_alter_part_table(THD *thd, TABLE *table, Alter_info *alter_info,
         DBUG_PRINT("info",
                    ("New engine type: %s",
                     ha_resolve_storage_engine_name(create_info->db_type)));
-        thd->work_part_info = NULL;
+        thd->work_part_info = nullptr;
         *partition_changed = true;
       } else if (!thd->work_part_info) {
         /*
@@ -5116,7 +5122,7 @@ uint prep_alter_part_table(THD *thd, TABLE *table, Alter_info *alter_info,
               If the user originally didn't specify partitioning to be
               used we can remove it now.
             */
-            thd->work_part_info = NULL;
+            thd->work_part_info = nullptr;
           } else {
             /*
               Ensure that all partitions have the proper engine set-up
@@ -5178,7 +5184,7 @@ uint prep_alter_part_table(THD *thd, TABLE *table, Alter_info *alter_info,
   }
   return false;
 err:
-  *new_part_info = NULL;
+  *new_part_info = nullptr;
   return true;
 }
 
@@ -5232,9 +5238,9 @@ void append_row_to_str(String &str, const uchar *row, TABLE *table) {
   fields = (Field **)my_malloc(key_memory_handler_errmsgs,
                                sizeof(void *) * (num_fields + 1), MYF(0));
   if (!fields) return;
-  fields[num_fields] = NULL;
+  fields[num_fields] = nullptr;
   for (field_ptr = table->field; *field_ptr; field_ptr++) {
-    if (!bitmap_is_set(table->read_set, (*field_ptr)->field_index)) continue;
+    if (!bitmap_is_set(table->read_set, (*field_ptr)->field_index())) continue;
     fields[curr_field_index++] = *field_ptr;
   }
 
@@ -5369,8 +5375,8 @@ bool make_used_partitions_str(partition_info *part_info,
 */
 static void set_up_range_analysis_info(partition_info *part_info) {
   /* Set the catch-all default */
-  part_info->get_part_iter_for_interval = NULL;
-  part_info->get_subpart_iter_for_interval = NULL;
+  part_info->get_part_iter_for_interval = nullptr;
+  part_info->get_subpart_iter_for_interval = nullptr;
 
   /*
     Check if get_part_iter_for_interval_via_mapping() can be used for
@@ -5455,7 +5461,7 @@ static uint32 store_tuple_to_record(Field **pfield, uint32 *store_length_array,
   uchar *loc_value;
   while (value < value_end) {
     loc_value = value;
-    if ((*pfield)->real_maybe_null()) {
+    if ((*pfield)->is_nullable()) {
       if (*loc_value)
         (*pfield)->set_null();
       else
@@ -5717,7 +5723,7 @@ static int get_part_iter_for_interval_via_mapping(
     uint flags, PARTITION_ITERATOR *part_iter) {
   Field *field = part_info->part_field_array[0];
   uint32 max_endpoint_val = 0;
-  get_endpoint_func get_endpoint = 0;
+  get_endpoint_func get_endpoint = nullptr;
   bool can_match_multiple_values; /* is not '=' */
   uint field_len = field->pack_length_in_rec();
   MYSQL_TIME start_date;
@@ -5779,7 +5785,7 @@ static int get_part_iter_for_interval_via_mapping(
     Find minimum: Do special handling if the interval has left bound in form
      " NULL <= X ":
   */
-  if (field->real_maybe_null() && part_info->has_null_value &&
+  if (field->is_nullable() && part_info->has_null_value &&
       !(flags & (NO_MIN_RANGE | NEAR_MIN)) && *min_value) {
     part_iter->ret_null_part = part_iter->ret_null_part_orig = true;
     part_iter->part_nums.start = part_iter->part_nums.cur = 0;
@@ -5925,7 +5931,7 @@ static int get_part_iter_for_interval_via_walking(
   }
 
   /* Handle the "t.field IS NULL" interval, it is a special case */
-  if (field->real_maybe_null() && !(flags & (NO_MIN_RANGE | NO_MAX_RANGE)) &&
+  if (field->is_nullable() && !(flags & (NO_MIN_RANGE | NO_MAX_RANGE)) &&
       *min_value && *max_value) {
     /*
       We don't have a part_iter->get_next() function that would find which
@@ -5953,7 +5959,7 @@ static int get_part_iter_for_interval_via_walking(
     return 0; /* No partitions match */
   }
 
-  if ((field->real_maybe_null() &&
+  if ((field->is_nullable() &&
        ((!(flags & NO_MIN_RANGE) && *min_value) ||    // NULL <? X
         (!(flags & NO_MAX_RANGE) && *max_value))) ||  // X <? NULL
       (flags & (NO_MIN_RANGE | NO_MAX_RANGE)))        // -inf at any bound
@@ -6099,7 +6105,8 @@ static uint32 get_next_partition_via_walking(PARTITION_ITERATOR *part_iter) {
   Field *field = part_iter->part_info->part_field_array[0];
   while (part_iter->field_vals.cur != part_iter->field_vals.end) {
     longlong dummy;
-    field->store(part_iter->field_vals.cur++, field->flags & UNSIGNED_FLAG);
+    field->store(part_iter->field_vals.cur++,
+                 field->is_flag_set(UNSIGNED_FLAG));
     if ((part_iter->part_info->is_sub_partitioned() &&
          !part_iter->part_info->get_part_partition_id(part_iter->part_info,
                                                       &part_id, &dummy)) ||
@@ -6120,7 +6127,7 @@ static uint32 get_next_subpartition_via_walking(PARTITION_ITERATOR *part_iter) {
     part_iter->field_vals.cur = part_iter->field_vals.start;
     return NOT_A_PARTITION_ID;
   }
-  field->store(part_iter->field_vals.cur++, field->flags & UNSIGNED_FLAG);
+  field->store(part_iter->field_vals.cur++, field->is_flag_set(UNSIGNED_FLAG));
   if (part_iter->part_info->get_subpartition_id(part_iter->part_info, &res))
     return NOT_A_PARTITION_ID;
   return res;
@@ -6130,7 +6137,7 @@ uint get_partition_field_store_length(Field *field) {
   uint store_length;
 
   store_length = field->key_length();
-  if (field->real_maybe_null()) store_length += HA_KEY_NULL_LENGTH;
+  if (field->is_nullable()) store_length += HA_KEY_NULL_LENGTH;
   if (field->real_type() == MYSQL_TYPE_VARCHAR)
     store_length += HA_KEY_BLOB_LENGTH;
   return store_length;

@@ -1,7 +1,7 @@
 #ifndef ITEM_FUNC_INCLUDED
 #define ITEM_FUNC_INCLUDED
 
-/* Copyright (c) 2000, 2019, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2000, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -26,6 +26,7 @@
 #include <limits.h>
 #include <stddef.h>
 #include <sys/types.h>
+
 #include <cmath>  // isfinite
 #include <functional>
 
@@ -171,6 +172,7 @@ class Item_func : public Item_result_field {
     NEG_FUNC,
     GSYSVAR_FUNC,
     GROUPING_FUNC,
+    ROLLUP_GROUP_ITEM_FUNC,
     TABLE_FUNC,
     DD_INTERNAL_FUNC,
     PLUS_FUNC,
@@ -202,13 +204,17 @@ class Item_func : public Item_result_field {
     CASE_FUNC,
     YEAR_FUNC,
     MONTH_FUNC,
+    MONTHNAME_FUNC,
     DAY_FUNC,
+    DAYNAME_FUNC,
     TO_DAYS_FUNC,
     DATE_FUNC,
     HOUR_FUNC,
     MINUTE_FUNC,
     SECOND_FUNC,
     MICROSECOND_FUNC,
+    DAYOFYEAR_FUNC,
+    QUARTER_FUNC,
     WEEK_FUNC,
     WEEKDAY_FUNC,
     DATEADD_FUNC,
@@ -220,7 +226,8 @@ class Item_func : public Item_result_field {
     JSON_CONTAINS,
     JSON_OVERLAPS,
     MEMBER_OF_FUNC,
-    STRCMP_FUNC
+    STRCMP_FUNC,
+    TRUE_FUNC
   };
   enum optimize_type {
     OPTIMIZE_NONE,
@@ -537,36 +544,23 @@ class Item_func : public Item_result_field {
 
     @param arg  the arg to cache
 
-    @returns
-      true   arg can be cached
-      false  otherwise
+    @retval true   arg can be cached
+    @retval false  otherwise
   */
   virtual enum_const_item_cache can_cache_json_arg(
       Item *arg MY_ATTRIBUTE((unused))) {
     return CACHE_NONE;
   }
 
-  /// Returns true if this Item has at least one condition that can be
-  /// implemented as hash join. A hash join condition is an equi-join condition
-  /// where one side of the condition refers to the right table, and the other
-  /// side of the condition refers to one or more of the left tables.
-  ///
-  /// @param left_tables the left tables in the join
-  /// @param right_table the right table of the join
-  ///
-  /// @retval true if the Item has at least one hash join condition
-  virtual bool has_any_hash_join_condition(
-      const table_map left_tables MY_ATTRIBUTE((unused)),
-      const QEP_TAB &right_table MY_ATTRIBUTE((unused))) const {
-    return false;
-  }
+  /// Whether this Item is an equi-join condition. If this Item is a compound
+  /// item (i.e. multiple condition AND'ed together), it will only return true
+  /// if the Item contains only equi-join conditions AND'ed together. This is
+  /// used to determine whether the condition can be used as a join condition
+  /// for hash join (join conditions in hash join must be equi-join conditions),
+  /// or if it should be placed as a filter after the join.
+  virtual bool contains_only_equi_join_condition() const { return false; }
 
-  /// Returns true if this Item has at least one non equi-join condition.
-  /// A non equi-join condition is a condition where both sides refer to at
-  /// least one table, and the operator is not equals '='.
-  ///
-  /// @retval true if the Item has at least one non equi-join condition
-  virtual bool has_any_non_equi_join_condition() const { return false; }
+  bool ensure_multi_equality_fields_are_available_walker(uchar *) override;
 
  protected:
   /**
@@ -646,6 +640,8 @@ class Item_func : public Item_result_field {
     }
     return false;
   }
+
+  longlong val_int_from_real();
 };
 
 class Item_real_func : public Item_func {
@@ -797,7 +793,7 @@ class Item_func_num1 : public Item_func_numhybrid {
   void set_numeric_type() override;
   String *str_op(String *) override {
     DBUG_ASSERT(0);
-    return 0;
+    return nullptr;
   }
   bool date_op(MYSQL_TIME *, my_time_flags_t) override {
     DBUG_ASSERT(0);
@@ -826,7 +822,7 @@ class Item_num_op : public Item_func_numhybrid {
   void set_numeric_type() override;
   String *str_op(String *) override {
     DBUG_ASSERT(0);
-    return 0;
+    return nullptr;
   }
   bool date_op(MYSQL_TIME *, my_time_flags_t) override {
     DBUG_ASSERT(0);
@@ -989,7 +985,7 @@ class Item_typecast_real final : public Item_func {
   Item_typecast_real(Item *a) : Item_func(a) { set_data_type_double(); }
   String *val_str(String *str) override;
   double val_real() override;
-  longlong val_int() override;
+  longlong val_int() override { return val_int_from_real(); }
   bool get_date(MYSQL_TIME *ltime, my_time_flags_t fuzzydate) override;
   bool get_time(MYSQL_TIME *ltime) override;
   my_decimal *val_decimal(my_decimal *decimal_value) override;
@@ -1334,7 +1330,7 @@ class Item_func_rand final : public Item_real_func {
   bool first_eval;  // true if val_real() is called 1st time
  public:
   Item_func_rand(const POS &pos, Item *a)
-      : Item_real_func(pos, a), rand(0), first_eval(true) {}
+      : Item_real_func(pos, a), rand(nullptr), first_eval(true) {}
   explicit Item_func_rand(const POS &pos) : Item_real_func(pos) {}
 
   bool itemize(Parse_context *pc, Item **res) override;
@@ -1490,34 +1486,54 @@ class Item_func_max final : public Item_func_min_max {
   enum Functype functype() const override { return GREATEST_FUNC; }
 };
 
-/*
-  Objects of this class are used for ROLLUP queries to wrap up
-  each constant item referred to in GROUP BY list.
+/**
+  A wrapper Item that normally returns its parameter, but becomes NULL when
+  processing rows for rollup. Rollup is implemented by AggregateIterator, and
+  works by means of hierarchical levels -- 0 is the “grand totals” phase, 1 is
+  where only one group level is active, and so on. E.g., for a query with GROUP
+  BY a,b, the rows will look like this:
 
-  Before grouping the wrapped item could be considered constant, but after
-  grouping it is not, as rollup adds NULL values, which can affect later
-  phases like DISTINCT or windowing.
-*/
+     a     b      rollup level
+     1     1      2
+     1     2      2
+     1     NULL   1
+     2     1      2
+     2     NULL   1
+     NULL  NULL   0
 
-class Item_func_rollup_const final : public Item_func {
+  Each rollup group item has a minimum level for when it becomes NULL. In the
+  example above, a would have minimum level 0 and b would have minimum level 1.
+  For simplicity, the JOIN carries a list of all rollup group items, and they
+  are being given the current rollup level when it changes. A rollup level of
+  INT_MAX essentially always disables rollup, which is useful when there are
+  leftover group items in places that are not relevant for rollup
+  (e.g., sometimes resolving can leave rollup wrappers in place for temporary
+  tables that are created before grouping, which should then effectively be
+  disabled).
+ */
+class Item_rollup_group_item final : public Item_func {
  public:
-  Item_func_rollup_const(Item *a) : Item_func(a) { item_name = a->item_name; }
+  Item_rollup_group_item(int min_rollup_level, Item *inner_item)
+      : Item_func(inner_item), m_min_rollup_level(min_rollup_level) {
+    item_name = inner_item->item_name;
+    max_length = inner_item->max_length;
+    set_data_type(inner_item->data_type());
+    collation = inner_item->collation;
+    maybe_null = true;
+    set_rollup_expr();
+  }
   double val_real() override;
   longlong val_int() override;
   String *val_str(String *str) override;
   my_decimal *val_decimal(my_decimal *dec) override;
   bool val_json(Json_wrapper *result) override;
-  bool get_date(MYSQL_TIME *ltime, my_time_flags_t fuzzydate) override {
-    return (null_value = args[0]->get_date(ltime, fuzzydate));
-  }
-  bool get_time(MYSQL_TIME *ltime) override {
-    return (null_value = args[0]->get_time(ltime));
-  }
-  const char *func_name() const override { return "rollup_const"; }
+  bool get_date(MYSQL_TIME *ltime, my_time_flags_t fuzzydate) override;
+  bool get_time(MYSQL_TIME *ltime) override;
+  const char *func_name() const override { return "rollup_group_item"; }
   table_map used_tables() const override {
     /*
       If underlying item is non-constant, return its used_tables value.
-      Otherwise ensure it is non-constant by returning RAND_TABLE_BIT.
+      Otherwise, ensure it is non-constant by returning RAND_TABLE_BIT.
     */
     return args[0]->used_tables() ? args[0]->used_tables() : RAND_TABLE_BIT;
   }
@@ -1529,6 +1545,23 @@ class Item_func_rollup_const final : public Item_func {
     null_value = args[0]->is_null();
     return false;
   }
+  Item *inner_item() const { return args[0]; }
+  bool rollup_null() const {
+    return m_current_rollup_level <= m_min_rollup_level;
+  }
+  enum Functype functype() const override { return ROLLUP_GROUP_ITEM_FUNC; }
+  void print(const THD *thd, String *str,
+             enum_query_type query_type) const override;
+
+  // Used by AggregateIterator.
+  void set_current_rollup_level(int level) { m_current_rollup_level = level; }
+
+  // Used when cloning the item only.
+  int min_rollup_level() const { return m_min_rollup_level; }
+
+ private:
+  const int m_min_rollup_level;
+  int m_current_rollup_level = INT_MAX;
 };
 
 class Item_func_length : public Item_int_func {
@@ -1723,7 +1756,7 @@ class Item_func_bit : public Item_func {
     @brief Performs the operation on integers to produce a result of type
     INT_RESULT.
     @return The result of the operation.
- */
+   */
   virtual longlong int_op() = 0;
 
   /**
@@ -2008,6 +2041,9 @@ class Item_udf_func : public Item_func {
     if ((used_tables_cache & ~PSEUDO_TABLE_BITS) &&
         !(used_tables_cache & RAND_TABLE_BIT))
       Item_func::update_used_tables();
+
+    not_null_tables_cache = 0;
+    DBUG_ASSERT(!null_on_null);  // no need to update not_null_tables_cache
   }
   void cleanup() override;
   Item_result result_type() const override { return udf.result_type(); }
@@ -2037,7 +2073,7 @@ class Item_func_udf_float final : public Item_udf_func {
   }
   my_decimal *val_decimal(my_decimal *dec_buf) override {
     double res = val_real();
-    if (null_value) return NULL;
+    if (null_value) return nullptr;
     double2my_decimal(E_DEC_FATAL_ERROR, res, dec_buf);
     return dec_buf;
   }
@@ -2120,7 +2156,7 @@ class Item_func_udf_str : public Item_udf_func {
   }
   my_decimal *val_decimal(my_decimal *dec_buf) override {
     String *res = val_str(&str_value);
-    if (!res) return NULL;
+    if (!res) return nullptr;
     str2my_decimal(E_DEC_FATAL_ERROR, res->ptr(), res->length(), res->charset(),
                    dec_buf);
     return dec_buf;
@@ -2865,7 +2901,7 @@ class user_var_entry {
   THD *m_owner;
 
   void reset_value() {
-    m_ptr = NULL;
+    m_ptr = nullptr;
     m_length = 0;
   }
   void set_value(char *value, size_t length) {
@@ -2934,7 +2970,6 @@ class user_var_entry {
     @param from    Value
     @param length  Size of the value
     @param type    type
-    @return
     @retval        false on success
     @retval        true on memory allocation error
   */
@@ -2953,8 +2988,6 @@ class user_var_entry {
   void assert_locked() const;
 
  public:
-  user_var_entry() {} /* Remove gcc warning */
-
   Simple_cstring entry_name;  // Variable name
   DTCollation collation;      // Collation with attributes
   query_id_t update_query_id, used_query_id;
@@ -2969,7 +3002,6 @@ class user_var_entry {
     @param cs           Character set and collation of the value
     @param dv           Collation derivation of the value
     @param unsigned_arg Signess of the value
-    @return
     @retval        false on success
     @retval        true on memory allocation error
   */
@@ -3076,14 +3108,14 @@ class Item_func_set_user_var : public Item_var_func {
   Item_func_set_user_var(Name_string a, Item *b, bool delayed)
       : Item_var_func(b),
         cached_result_type(INT_RESULT),
-        entry(NULL),
+        entry(nullptr),
         entry_thread_id(0),
         delayed_non_constness(delayed),
         name(a) {}
   Item_func_set_user_var(const POS &pos, Name_string a, Item *b, bool delayed)
       : Item_var_func(pos, b),
         cached_result_type(INT_RESULT),
-        entry(NULL),
+        entry(nullptr),
         entry_thread_id(0),
         delayed_non_constness(delayed),
         name(a) {}
@@ -3156,7 +3188,10 @@ class Item_func_get_user_var : public Item_var_func,
   my_decimal *val_decimal(my_decimal *) override;
   String *val_str(String *str) override;
   bool resolve_type(THD *) override;
-  void update_used_tables() override {}  // Keep existing used tables
+  void update_used_tables() override {  // Keep existing used tables
+    DBUG_ASSERT(arg_count == 0);
+    not_null_tables_cache = 0;
+  }
   void print(const THD *thd, String *str,
              enum_query_type query_type) const override;
   enum Item_result result_type() const override;
@@ -3343,11 +3378,11 @@ class Item_func_match final : public Item_real_func {
         key(0),
         flags(b),
         join_key(false),
-        ft_handler(NULL),
-        table_ref(NULL),
-        master(NULL),
-        concat_ws(NULL),
-        hints(NULL),
+        ft_handler(nullptr),
+        table_ref(nullptr),
+        master(nullptr),
+        concat_ws(nullptr),
+        hints(nullptr),
         simple_expression(false) {
     null_on_null = false;
   }
@@ -3361,16 +3396,15 @@ class Item_func_match final : public Item_real_func {
       ft_handler->please->close_search(ft_handler);
       destroy(hints);
     }
-    ft_handler = NULL;
-    concat_ws = NULL;
-    table_ref = NULL;  // required by Item_func_match::eq()
-    master = NULL;
+    ft_handler = nullptr;
+    concat_ws = nullptr;
+    table_ref = nullptr;  // required by Item_func_match::eq()
+    master = nullptr;
     return;
   }
   Item *key_item() const override { return against; }
   enum Functype functype() const override { return FT_FUNC; }
   const char *func_name() const override { return "match"; }
-  void update_used_tables() override {}
   bool fix_fields(THD *thd, Item **ref) override;
   bool eq(const Item *, bool binary_cmp) const override;
   /* The following should be safe, even if we compare doubles */
@@ -3667,8 +3701,7 @@ class Item_func_sp final : public Item_func {
  private:
   Name_resolution_context *context;
   sp_name *m_name;
-  mutable sp_head *m_sp;
-  TABLE *dummy_table;
+  sp_head *m_sp;
   /*
      The result field of the concrete stored function.
   */
@@ -3727,7 +3760,7 @@ class Item_func_sp final : public Item_func {
   }
 
   my_decimal *val_decimal(my_decimal *dec_buf) override {
-    if (execute() || null_value) return NULL;
+    if (execute() || null_value) return nullptr;
     return sp_result_field->val_decimal(dec_buf);
   }
 
@@ -3736,7 +3769,7 @@ class Item_func_sp final : public Item_func {
     char buff[20];
     buf.set(buff, 20, str->charset());
     buf.length(0);
-    if (execute() || null_value) return NULL;
+    if (execute() || null_value) return nullptr;
     /*
       result_field will set buf pointing to internal buffer
       of the resul_field. Due to this it will change any time
@@ -3750,8 +3783,8 @@ class Item_func_sp final : public Item_func {
 
   bool val_json(Json_wrapper *result) override;
 
-  bool change_context_processor(uchar *cntx) override {
-    context = reinterpret_cast<Name_resolution_context *>(cntx);
+  bool change_context_processor(uchar *arg) override {
+    context = reinterpret_cast<Item_ident::Change_context *>(arg)->m_context;
     return false;
   }
 
@@ -3876,7 +3909,7 @@ double my_double_round(double value, longlong dec, bool dec_unsigned,
                        bool truncate);
 bool eval_const_cond(THD *thd, Item *cond, bool *value);
 Item_field *get_gc_for_expr(Item_func **func, Field *fld, Item_result type,
-                            Field **found = NULL);
+                            Field **found = nullptr);
 
 void retrieve_tablespace_statistics(THD *thd, Item **args, bool *null_value);
 

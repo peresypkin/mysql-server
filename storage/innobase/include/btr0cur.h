@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1994, 2019, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 1994, 2020, Oracle and/or its affiliates. All Rights Reserved.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -262,7 +262,6 @@ dberr_t btr_cur_optimistic_insert(
     big_rec_t **big_rec, /*!< out: big rec vector whose fields have to
                          be stored externally by the caller, or
                          NULL */
-    ulint n_ext,         /*!< in: number of externally stored columns */
     que_thr_t *thr,      /*!< in: query thread or NULL */
     mtr_t *mtr)          /*!< in/out: mini-transaction;
                          if this function returns DB_SUCCESS on
@@ -277,7 +276,7 @@ dberr_t btr_cur_optimistic_insert(
  to brothers of page, if those brothers exist.
  @return DB_SUCCESS or error number */
 dberr_t btr_cur_pessimistic_insert(
-    ulint flags,         /*!< in: undo logging and locking flags: if not
+    uint32_t flags,      /*!< in: undo logging and locking flags: if not
                          zero, the parameter thr should be
                          specified; if no undo logging is specified,
                          then the caller must have reserved enough
@@ -294,7 +293,6 @@ dberr_t btr_cur_pessimistic_insert(
     big_rec_t **big_rec, /*!< out: big rec vector whose fields have to
                          be stored externally by the caller, or
                          NULL */
-    ulint n_ext,         /*!< in: number of externally stored columns */
     que_thr_t *thr,      /*!< in: query thread or NULL */
     mtr_t *mtr)          /*!< in/out: mini-transaction */
     MY_ATTRIBUTE((warn_unused_result));
@@ -520,9 +518,9 @@ ibool btr_cur_optimistic_delete_func(
 @param[in] pcur   persistent cursor on the record to delete.
 @return true if compression occurred */
 ibool btr_cur_pessimistic_delete(dberr_t *err, ibool has_reserved_extents,
-                                 btr_cur_t *cursor, ulint flags, bool rollback,
-                                 trx_id_t trx_id, undo_no_t undo_no,
-                                 ulint rec_type, mtr_t *mtr,
+                                 btr_cur_t *cursor, uint32_t flags,
+                                 bool rollback, trx_id_t trx_id,
+                                 undo_no_t undo_no, ulint rec_type, mtr_t *mtr,
                                  btr_pcur_t *pcur = nullptr);
 
 /** Parses a redo log record of updating a record in-place.
@@ -587,8 +585,12 @@ bool btr_estimate_number_of_different_key_vals(
 @param[in]	page_size	BLOB page size
 @param[in]	no		field number
 @param[out]	len		length of the field
-@param[out]	lob_version	version of lob
-@param[in]	is_sdi		true for SDI Indexes
+@param[out]	lob_version	version of lob */
+#ifdef UNIV_DEBUG
+/**
+@param[in]	is_sdi		true for SDI Indexes */
+#endif /* UNIV_DEBUG */
+/**
 @param[in,out]	heap		mem heap
 @return the field copied to heap, or NULL if the field is incomplete */
 byte *btr_rec_copy_externally_stored_field_func(

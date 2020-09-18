@@ -1,4 +1,4 @@
-/* Copyright (c) 2000, 2019, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2000, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -128,8 +128,8 @@ class Item_str_func : public Item_func {
     set_data_type_string_init();
   }
 
-  longlong val_int() override;
-  double val_real() override;
+  longlong val_int() override { return val_int_from_string(); }
+  double val_real() override { return val_real_from_string(); }
   my_decimal *val_decimal(my_decimal *) override;
   bool get_date(MYSQL_TIME *ltime, my_time_flags_t fuzzydate) override {
     return get_date_from_string(ltime, fuzzydate);
@@ -550,7 +550,7 @@ class Item_func_trim : public Item_str_func {
       case TRIM_RTRIM:
         return "rtrim";
     }
-    return NULL;
+    return nullptr;
   }
   void print(const THD *thd, String *str,
              enum_query_type query_type) const override;
@@ -635,7 +635,7 @@ class Item_func_user : public Item_func_sysconst {
 
   String *val_str(String *) override {
     DBUG_ASSERT(fixed == 1);
-    return (null_value ? 0 : &str_value);
+    return (null_value ? nullptr : &str_value);
   }
   bool fix_fields(THD *thd, Item **ref) override;
   bool check_function_as_value_generator(uchar *checker_args) override {
@@ -1056,7 +1056,7 @@ class Item_func_set_collation final : public Item_str_func {
  public:
   Item_func_set_collation(const POS &pos, Item *a,
                           const LEX_STRING &collation_string_arg)
-      : super(pos, a, NULL), collation_string(collation_string_arg) {}
+      : super(pos, a, nullptr), collation_string(collation_string_arg) {}
 
   bool itemize(Parse_context *pc, Item **res) override;
   String *val_str(String *) override;
@@ -1118,7 +1118,7 @@ class Item_func_weight_string final : public Item_str_func {
         flags(flags_arg),
         num_codepoints(num_codepoints_arg),
         result_length(result_length_arg),
-        field(NULL),
+        field(nullptr),
         as_binary(as_binary_arg) {}
 
   bool itemize(Parse_context *pc, Item **res) override;

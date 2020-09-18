@@ -39,7 +39,8 @@ var defaults = {
   router_id: 1,
   // let the test that uses it set it explicitly, going with some default would mean failures
   // each time the version is bumped up (which we don't even control)
-  router_version: ""
+  router_version: "",
+  rest_user_credentials: []
 };
 
 function ensure_type(options, field, expected_type) {
@@ -168,12 +169,8 @@ exports.get = function get(stmt_key, options) {
           }
         ],
         rows: options["group_replication_membership"].map(function(currentValue) {
-          var result = currentValue.slice();
-          // if group_replication_membership contains x port we need to remove it
-          // as this query does not want it
-          if (result.length === 5)
-              result.splice(-1,1);
-          return result.concat([ options["group_replication_single_primary_mode"] ]);
+          return [currentValue[0], currentValue[1], currentValue[2],
+                  currentValue[3], options["group_replication_single_primary_mode"]];
         }),
       }
     },
@@ -200,7 +197,7 @@ exports.get = function get(stmt_key, options) {
     },
 
     router_select_metadata: {
-      stmt: "SELECT R.replicaset_name, I.mysql_server_uuid, I.role, I.weight, I.version_token, I.addresses->>'$.mysqlClassic', I.addresses->>'$.mysqlX' FROM mysql_innodb_cluster_metadata.clusters AS F JOIN mysql_innodb_cluster_metadata.replicasets AS R ON F.cluster_id = R.cluster_id JOIN mysql_innodb_cluster_metadata.instances AS I"
+      stmt: "SELECT R.replicaset_name, I.mysql_server_uuid, I.addresses->>'$.mysqlClassic', I.addresses->>'$.mysqlX' FROM mysql_innodb_cluster_metadata.clusters AS F JOIN mysql_innodb_cluster_metadata.replicasets AS R ON F.cluster_id = R.cluster_id JOIN mysql_innodb_cluster_metadata.instances AS I"
             + " ON R.replicaset_id = I.replicaset_id WHERE F.cluster_name = '"
             + options.innodb_cluster_name + "'"
             + (options.gr_id === undefined || options.gr_id === "" ? "" : (" AND R.attributes->>'$.group_replication_group_name' = '" + options.gr_id + "'")),
@@ -213,18 +210,6 @@ exports.get = function get(stmt_key, options) {
           {
               "name": "mysql_server_uuid",
               "type": "VAR_STRING"
-          },
-          {
-              "name": "role",
-              "type": "STRING"
-          },
-          {
-              "name": "weight",
-              "type": "FLOAT"
-          },
-          {
-              "name": "version_token",
-              "type": "LONG"
           },
           {
               "name": "I.addresses->>'$.mysqlClassic'",
@@ -240,9 +225,6 @@ exports.get = function get(stmt_key, options) {
           return [
             options.innodb_cluster_replicaset_name,
             currentValue[0],
-            "HA",
-            null,
-            null,
             currentValue[1] + ":" + currentValue[2],
             currentValue[1] + ":" + xport
           ]
@@ -251,7 +233,7 @@ exports.get = function get(stmt_key, options) {
     },
 
     router_select_metadata_v2_gr: {
-      stmt: "select I.mysql_server_uuid, I.endpoint, I.xendpoint from mysql_innodb_cluster_metadata.v2_instances I join mysql_innodb_cluster_metadata.v2_gr_clusters C on I.cluster_id = C.cluster_id where C.cluster_name = '"
+      stmt: "select I.mysql_server_uuid, I.endpoint, I.xendpoint, I.attributes from mysql_innodb_cluster_metadata.v2_instances I join mysql_innodb_cluster_metadata.v2_gr_clusters C on I.cluster_id = C.cluster_id where C.cluster_name = '"
             + options.innodb_cluster_name + "'"
             + (options.gr_id === undefined || options.gr_id === "" ? "" : (" AND C.group_name = '" + options.gr_id + "'")),
       result : {
@@ -267,21 +249,27 @@ exports.get = function get(stmt_key, options) {
           {
               "name": "I.addresses->>'$.mysqlX'",
               "type": "LONGBLOB"
+          },
+          {
+               "name": "I.attributes",
+               "type": "VAR_STRING"
           }
         ],
         rows: options["group_replication_membership"].map(function(currentValue) {
           var xport = currentValue[4] === undefined ? 0 : currentValue[4];
+          var attributes = currentValue[5] === undefined ? "" : currentValue[5];
           return [
             currentValue[0],
             currentValue[1] + ":" + currentValue[2],
-            currentValue[1] + ":" + xport
+            currentValue[1] + ":" + xport,
+            attributes
           ]
         }),
       }
     },
 
     router_select_metadata_v2_ar: {
-      stmt: "select M.member_id, I.endpoint, I.xendpoint, M.member_role from mysql_innodb_cluster_metadata.v2_ar_members M join mysql_innodb_cluster_metadata.v2_instances I on I.instance_id = M.instance_id join mysql_innodb_cluster_metadata.v2_ar_clusters C on I.cluster_id = C.cluster_id"
+      stmt: "select M.member_id, I.endpoint, I.xendpoint, M.member_role, I.attributes from mysql_innodb_cluster_metadata.v2_ar_members M join mysql_innodb_cluster_metadata.v2_instances I on I.instance_id = M.instance_id join mysql_innodb_cluster_metadata.v2_ar_clusters C on I.cluster_id = C.cluster_id"
             + (options.cluster_id === undefined || options.cluster_id === "" ? "" : (" where C.cluster_id = '" + options.cluster_id + "'")),
       result : {
         columns : [
@@ -300,15 +288,21 @@ exports.get = function get(stmt_key, options) {
           {
               "name": "I.member_role",
               "type": "VAR_STRING"
+          },
+          {
+              "name": "I.attributes",
+              "type": "VAR_STRING"
           }
         ],
         rows: options["group_replication_membership"].map(function(currentValue) {
           var xport = currentValue[4] === undefined ? 0 : currentValue[4];
+          var attributes = currentValue[5] === undefined ? "" : currentValue[5];
           return [
             currentValue[0],
             currentValue[1] + ":" + currentValue[2],
             currentValue[1] + ":" + xport,
-            currentValue[2] === options.primary_port ? "PRIMARY" : "SECONDARY"
+            currentValue[2] === options.primary_port ? "PRIMARY" : "SECONDARY",
+            attributes
           ]
         }),
       }
@@ -632,8 +626,7 @@ exports.get = function get(stmt_key, options) {
     },
 
     router_select_metadata_v2: {
-      stmt: "select 'default' as replicaset_name, I.mysql_server_uuid, 'HA' as role, " +
-              "0 as weight, 0 as version_token, I.endpoint, I.xendpoint from " +
+      stmt: "select 'default' as replicaset_name, I.mysql_server_uuid, I.endpoint, I.xendpoint, I.attributes from " +
               "mysql_innodb_cluster_metadata.v2_instances I join " +
               "mysql_innodb_cluster_metadata.v2_gr_clusters C on I.cluster_id = " +
               "C.cluster_id where C.cluster_name =  " +
@@ -650,49 +643,40 @@ exports.get = function get(stmt_key, options) {
             "type": "VAR_STRING"
           },
           {
-            "name": "role",
-            "type": "STRING"
-          },
-          {
-            "name": "weight",
-            "type": "FLOAT"
-          },
-          {
-            "name": "version_token",
-             "type": "LONG"
-          },
-          {
             "name": "I.addresses->>'$.mysqlClassic'",
             "type": "LONGBLOB"
           },
           {
             "name": "I.addresses->>'$.mysqlX'",
             "type": "LONGBLOB"
+          },
+          {
+            "name": "I.attributes",
+            "type": "VAR_STRING"
           }
         ],
         rows: options["group_replication_membership"].map(function(currentValue) {
             var xport = currentValue[4] === undefined ? 0 : currentValue[4];
+            var attributes = currentValue[5] === undefined ? "" : currentValue[5];
               return [
                 options.innodb_cluster_replicaset_name,
                 currentValue[0],
-                "HA",
-                null,
-                null,
                 currentValue[1] + ":" + currentValue[2],
-                currentValue[1] + ":" + xport
+                currentValue[1] + ":" + xport,
+                attributes
               ]
           }),
         }
     },
 
     router_count_clusters_v1: {
-      stmt: "select ((select count(*) from " +
-            "mysql_innodb_cluster_metadata.clusters)=1) as has_one_gr_cluster",
+      stmt: "select count(*) from " +
+            "mysql_innodb_cluster_metadata.clusters",
       result: {
         columns: [
           {
             "type": "LONGLONG",
-            "name": "has_one_gr_cluster"
+            "name": "count(*)"
           }
          ],
          rows: [
@@ -704,13 +688,13 @@ exports.get = function get(stmt_key, options) {
     },
 
     router_count_clusters_v2: {
-      stmt: "select ((select count(*) from " +
-             "mysql_innodb_cluster_metadata.v2_gr_clusters)=1) as has_one_gr_cluster",
+      stmt: "select count(*) from " +
+             "mysql_innodb_cluster_metadata.v2_gr_clusters",
       result: {
         columns: [
           {
             "type": "LONGLONG",
-            "name": "has_one_gr_cluster"
+            "name": "count(*)"
           }
          ],
          rows: [
@@ -722,13 +706,13 @@ exports.get = function get(stmt_key, options) {
     },
 
     router_count_clusters_v2_ar: {
-      stmt: "select ((select count(*) from " +
-            "mysql_innodb_cluster_metadata.v2_ar_clusters)=1) as has_one_ar_cluster",
+      stmt: "select count(*) from " +
+            "mysql_innodb_cluster_metadata.v2_ar_clusters",
       result: {
         columns: [
           {
             "type": "LONGLONG",
-            "name": "has_one_ar_cluster"
+            "name": "count(*)"
            }
         ],
         rows: [
@@ -857,7 +841,7 @@ exports.get = function get(stmt_key, options) {
             "name": "cluster_type"
           }
          ],
-         "rows": [[options.cluster_type]]
+         "rows": options.cluster_type === "" ? [] : [[options.cluster_type]]
       }
     },
 
@@ -955,6 +939,60 @@ exports.get = function get(stmt_key, options) {
       "stmt": "UPDATE mysql_innodb_cluster_metadata.v2_routers set last_check_in = " +
               "NOW() where router_id = " + options.router_id,
       "ok": {}
+    },
+
+    router_set_session_options:
+    {
+      "stmt": "SET @@SESSION.autocommit=1, @@SESSION.character_set_client=utf8, " +
+              "@@SESSION.character_set_results=utf8, @@SESSION.character_set_connection=utf8, " +
+              "@@SESSION.sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES," +
+              "NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION', " +
+              "@@SESSION.optimizer_switch='derived_merge=on'",
+      "ok": {}
+    },
+
+    router_set_gr_consistency_level:
+    {
+      "stmt": "SET @@SESSION.group_replication_consistency='EVENTUAL'",
+      "ok": {}
+    },
+
+    router_select_rest_accounts_credentials:
+    {
+      "stmt": "SELECT user, authentication_string, privileges, " +
+              "authentication_method FROM " +
+              "mysql_innodb_cluster_metadata.v2_router_rest_accounts WHERE " +
+              "cluster_id=(SELECT cluster_id FROM " +
+              "mysql_innodb_cluster_metadata.v2_clusters WHERE cluster_name='"
+              + options.innodb_cluster_name + "')",
+      "result": {
+        "columns": [
+          {
+            "type": "STRING",
+            "name": "user"
+          },
+          {
+            "type": "STRING",
+            "name": "authentication_string"
+          },
+          {
+            "type": "STRING",
+            "name": "privileges"
+          },
+          {
+            "type": "STRING",
+            "name": "authentication_method"
+          }
+        ],
+        "rows": options["rest_user_credentials"].map(function(currentValue) {
+              return [
+                currentValue[0],
+                currentValue[1],
+                currentValue[2] === "" ? null : currentValue[2],
+                currentValue[3],
+              ]
+        })
+      }
     },
   };
 

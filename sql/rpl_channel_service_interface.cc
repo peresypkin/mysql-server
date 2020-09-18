@@ -1,4 +1,4 @@
-/* Copyright (c) 2015, 2019, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2015, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -53,6 +53,7 @@
 #include "sql/mysqld.h"              // opt_mts_slave_parallel_workers
 #include "sql/mysqld_thd_manager.h"  // Global_THD_manager
 #include "sql/protocol_classic.h"
+#include "sql/rpl_channel_credentials.h"
 #include "sql/rpl_gtid.h"
 #include "sql/rpl_info_factory.h"
 #include "sql/rpl_info_handler.h"
@@ -137,7 +138,23 @@ static void set_mi_settings(Master_info *mi,
           ? opt_mts_checkpoint_group
           : channel_info->channel_mts_checkpoint_group;
 
-  mi->set_mi_description_event(new Format_description_log_event());
+  Format_description_log_event *fde = new Format_description_log_event();
+  /*
+    Group replication applier channel shall not use checksum on its relay log
+    files.
+  */
+  if (channel_map.is_group_replication_channel_name(mi->get_channel(), true)) {
+    fde->footer()->checksum_alg = binary_log::BINLOG_CHECKSUM_ALG_OFF;
+    /*
+      When the receiver thread connects to the master, it gets its current
+      binlog checksum algorithm, but as GR applier channel has no receiver
+      thread (and also does not connect to a master), we will set the variable
+      here to BINLOG_CHECKSUM_ALG_OFF as events queued after certification have
+      no checksum information.
+    */
+    mi->checksum_alg_before_fd = binary_log::BINLOG_CHECKSUM_ALG_OFF;
+  }
+  mi->set_mi_description_event(fde);
 
   mysql_mutex_unlock(&mi->data_lock);
   mysql_mutex_unlock(mi->rli->relay_log.get_log_lock());
@@ -165,11 +182,11 @@ static void delete_surrogate_thread(THD *thd) {
 
 void initialize_channel_creation_info(Channel_creation_info *channel_info) {
   channel_info->type = SLAVE_REPLICATION_CHANNEL;
-  channel_info->hostname = 0;
+  channel_info->hostname = nullptr;
   channel_info->port = 0;
-  channel_info->user = 0;
-  channel_info->password = 0;
-  channel_info->ssl_info = 0;
+  channel_info->user = nullptr;
+  channel_info->password = nullptr;
+  channel_info->ssl_info = nullptr;
   channel_info->auto_position = RPL_SERVICE_SERVER_DEFAULT;
   channel_info->channel_mts_parallel_type = RPL_SERVICE_SERVER_DEFAULT;
   channel_info->channel_mts_parallel_workers = RPL_SERVICE_SERVER_DEFAULT;
@@ -180,7 +197,7 @@ void initialize_channel_creation_info(Channel_creation_info *channel_info) {
   channel_info->preserve_relay_logs = false;
   channel_info->retry_count = 0;
   channel_info->connect_retry = 0;
-  channel_info->public_key_path = 0;
+  channel_info->public_key_path = nullptr;
   channel_info->get_public_key = 0;
   channel_info->compression_algorithm = nullptr;
   channel_info->zstd_compression_level = 0;
@@ -188,22 +205,22 @@ void initialize_channel_creation_info(Channel_creation_info *channel_info) {
 
 void initialize_channel_ssl_info(Channel_ssl_info *channel_ssl_info) {
   channel_ssl_info->use_ssl = 0;
-  channel_ssl_info->ssl_ca_file_name = 0;
-  channel_ssl_info->ssl_ca_directory = 0;
-  channel_ssl_info->ssl_cert_file_name = 0;
-  channel_ssl_info->ssl_crl_file_name = 0;
-  channel_ssl_info->ssl_crl_directory = 0;
-  channel_ssl_info->ssl_key = 0;
-  channel_ssl_info->ssl_cipher = 0;
-  channel_ssl_info->tls_version = 0;
+  channel_ssl_info->ssl_ca_file_name = nullptr;
+  channel_ssl_info->ssl_ca_directory = nullptr;
+  channel_ssl_info->ssl_cert_file_name = nullptr;
+  channel_ssl_info->ssl_crl_file_name = nullptr;
+  channel_ssl_info->ssl_crl_directory = nullptr;
+  channel_ssl_info->ssl_key = nullptr;
+  channel_ssl_info->ssl_cipher = nullptr;
+  channel_ssl_info->tls_version = nullptr;
   channel_ssl_info->ssl_verify_server_cert = 0;
-  channel_ssl_info->tls_ciphersuites = 0;
+  channel_ssl_info->tls_ciphersuites = nullptr;
 }
 
 void initialize_channel_connection_info(Channel_connection_info *channel_info) {
   channel_info->until_condition = CHANNEL_NO_UNTIL_CONDITION;
-  channel_info->gtid = 0;
-  channel_info->view_id = 0;
+  channel_info->gtid = nullptr;
+  channel_info->view_id = nullptr;
 }
 
 static void set_mi_ssl_options(LEX_MASTER_INFO *lex_mi,
@@ -384,6 +401,7 @@ int channel_start(const char *channel, Channel_connection_info *connection_info,
   ulong thread_start_id = 0;
   bool thd_created = false;
   THD *thd = current_thd;
+  String_set user, pass, auth;
 
   /* Service channels are not supposed to use sql_slave_skip_counter */
   mysql_mutex_lock(&LOCK_sql_slave_skip_counter);
@@ -413,6 +431,16 @@ int channel_start(const char *channel, Channel_connection_info *connection_info,
 
   LEX_SLAVE_CONNECTION lex_connection;
   lex_connection.reset();
+
+  if (!Rpl_channel_credentials::get_instance().get_credentials(channel, user,
+                                                               pass, auth)) {
+    lex_connection.user =
+        (user.first ? const_cast<char *>(user.second.c_str()) : nullptr);
+    lex_connection.password =
+        (pass.first ? const_cast<char *>(pass.second.c_str()) : nullptr);
+    lex_connection.plugin_auth =
+        (auth.first ? const_cast<char *>(auth.second.c_str()) : nullptr);
+  }
 
   if (connection_info->until_condition != CHANNEL_NO_UNTIL_CONDITION) {
     switch (connection_info->until_condition) {
@@ -1015,28 +1043,38 @@ int channel_get_retrieved_gtid_set(const char *channel, char **retrieved_set) {
   return error;
 }
 
-int channel_get_credentials(const char *channel, const char **user, char **pass,
-                            size_t *pass_size) {
-  DBUG_ENTER("channel_get_credentials(channel,user,password, pass_size)");
+int channel_get_credentials(const char *channel, std::string &username,
+                            std::string &password) {
+  DBUG_TRACE;
+  String_set user_store, pass_store, auth_store;
+
+  if (!Rpl_channel_credentials::get_instance().get_credentials(
+          channel, user_store, pass_store, auth_store)) {
+    if (user_store.first) username = user_store.second;
+    if (pass_store.first) password = pass_store.second;
+    return 0;
+  }
 
   channel_map.rdlock();
-
   Master_info *mi = channel_map.get_mi(channel);
 
-  if (mi == NULL) {
+  if (mi == nullptr) {
     channel_map.unlock();
-    DBUG_RETURN(RPL_CHANNEL_SERVICE_CHANNEL_DOES_NOT_EXISTS_ERROR);
+    return RPL_CHANNEL_SERVICE_CHANNEL_DOES_NOT_EXISTS_ERROR;
   }
 
   mi->inc_reference();
   channel_map.unlock();
 
-  *user = mi->get_user();
-  mi->get_password(*pass, pass_size);
+  char pass[MAX_PASSWORD_LENGTH + 1];
+  size_t pass_size;
+  mi->get_password(pass, &pass_size);
+  username.assign(mi->get_user());
+  password.assign(pass, pass_size);
 
   mi->dec_reference();
 
-  DBUG_RETURN(0);
+  return 0;
 }
 
 bool channel_is_stopping(const char *channel,
@@ -1169,4 +1207,10 @@ has_any_slave_channel_open_temp_table_or_is_its_applier_running() {
     return SLAVE_CHANNEL_APPLIER_IS_RUNNING;
 
   return SLAVE_CHANNEL_NO_APPLIER_RUNNING_AND_NO_OPEN_TEMPORARY_TABLE;
+}
+
+int channel_delete_credentials(const char *channel_name) {
+  DBUG_TRACE;
+  return Rpl_channel_credentials::get_instance().delete_credentials(
+      channel_name);
 }

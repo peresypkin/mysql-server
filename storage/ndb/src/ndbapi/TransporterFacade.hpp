@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2003, 2018, Oracle and/or its affiliates. All rights reserved.
+   Copyright (c) 2003, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -132,6 +132,7 @@ private:
 
 public:
   Uint32 getMinDbNodeVersion() const;
+  Uint32 getMinApiNodeVersion() const;
 
   // My own processor id
   NodeId ownId() const;
@@ -475,11 +476,16 @@ public:
    * methods on all clients known by TF to handle theirs thread local
    * send buffers.
    */
-  void enable_send_buffer(NodeId node);
-  void disable_send_buffer(NodeId node);
+  void enable_send_buffer(NodeId nodeId, TrpId trp_id);
+  void disable_send_buffer(NodeId nodeId, TrpId trp_id);
 
-  Uint32 get_bytes_to_send_iovec(NodeId node, struct iovec *dst, Uint32 max);
-  Uint32 bytes_sent(NodeId node, Uint32 bytes);
+  Uint32 get_bytes_to_send_iovec(NodeId nodeId,
+                                 TrpId trp_id,
+                                 struct iovec *dst,
+                                 Uint32 max);
+  Uint32 bytes_sent(NodeId nodeId,
+                    TrpId trp_id,
+                    Uint32 bytes);
 
 #ifdef ERROR_INSERT
   void consume_sendbuffer(Uint32 bytes_remain);
@@ -648,6 +654,12 @@ unsigned Ndb_cluster_connection_impl::get_min_db_version() const
 }
 
 inline
+unsigned Ndb_cluster_connection_impl::get_min_api_version() const
+{
+  return m_transporter_facade->getMinApiNodeVersion();
+}
+
+inline
 bool
 TransporterFacade::get_node_alive(NodeId n) const {
   if (theClusterMgr)
@@ -669,6 +681,16 @@ TransporterFacade::getMinDbNodeVersion() const
 {
   if (theClusterMgr)
     return theClusterMgr->minDbVersion;
+  else
+    return 0;
+}
+
+inline
+Uint32
+TransporterFacade::getMinApiNodeVersion() const
+{
+  if (theClusterMgr)
+    return theClusterMgr->minApiVersion;
   else
     return 0;
 }

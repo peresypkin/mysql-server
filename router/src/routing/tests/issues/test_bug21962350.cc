@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2015, 2018, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2015, 2020, Oracle and/or its affiliates. All rights reserved.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -27,6 +27,24 @@
  *
  */
 
+#include <fstream>
+#include <string>
+#include <thread>
+#include <vector>
+#include "mysql/harness/stdx/expected.h"
+
+// ignore GMock warnings
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wsign-conversion"
+#endif
+
+#include <gmock/gmock.h>
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
+
 #include "dest_round_robin.h"
 #include "destination.h"
 #include "mysql/harness/config_parser.h"
@@ -37,23 +55,6 @@
 #include "mysqlrouter/utils.h"
 #include "test/helpers.h"
 
-#include <fstream>
-#include <string>
-#include <thread>
-#include <vector>
-
-// ignore GMock warnings
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wsign-conversion"
-#endif
-
-#include "gmock/gmock.h"
-
-#ifdef __clang__
-#pragma clang diagnostic pop
-#endif
-
 using mysql_harness::TCPAddress;
 using mysqlrouter::to_string;
 using ::testing::_;
@@ -63,6 +64,8 @@ using ::testing::Return;
 
 class MockRouteDestination : public DestRoundRobin {
  public:
+  using result = stdx::expected<mysql_harness::socket_t, std::error_code>;
+
   void add_to_quarantine(const size_t index) noexcept {
     DestRoundRobin::add_to_quarantine(index);
   }
@@ -70,13 +73,14 @@ class MockRouteDestination : public DestRoundRobin {
   void cleanup_quarantine() noexcept { DestRoundRobin::cleanup_quarantine(); }
 
   MOCK_METHOD3(get_mysql_socket,
-               int(const TCPAddress &addr,
-                   std::chrono::milliseconds connect_timeout, bool log_errors));
+               result(const TCPAddress &addr,
+                      std::chrono::milliseconds connect_timeout,
+                      bool log_errors));
 };
 
 class Bug21962350 : public ::testing::Test {
  protected:
-  virtual void SetUp() {
+  void SetUp() override {
     std::ostream *log_stream =
         mysql_harness::logging::get_default_logger_stream();
 
@@ -84,7 +88,7 @@ class Bug21962350 : public ::testing::Test {
     log_stream->rdbuf(sslog.rdbuf());
   }
 
-  virtual void TearDown() {
+  void TearDown() override {
     if (orig_log_stream_) {
       std::ostream *log_stream =
           mysql_harness::logging::get_default_logger_stream();
@@ -140,7 +144,8 @@ TEST_F(Bug21962350, CleanupQuarantine) {
   EXPECT_CALL(d, get_mysql_socket(_, _, _))
       .Times(4)
       .WillOnce(Return(100))
-      .WillOnce(Return(-1))
+      .WillOnce(Return(stdx::make_unexpected(
+          make_error_code(std::errc::connection_aborted))))
       .WillOnce(Return(300))
       .WillOnce(Return(200));
   d.cleanup_quarantine();
@@ -207,3 +212,8 @@ std::vector<TCPAddress> const Bug21962350::servers{
     TCPAddress("s2.example.com", 3306),
     TCPAddress("s3.example.com", 3306),
 };
+
+int main(int argc, char **argv) {
+  ::testing::InitGoogleTest(&argc, argv);
+  return RUN_ALL_TESTS();
+}

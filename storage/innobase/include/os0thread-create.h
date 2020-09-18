@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2018, 2019, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 1995, 2019, Oracle and/or its affiliates. All rights reserved.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -43,7 +43,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include <functional>
 
 /** Maximum number of threads inside InnoDB */
-extern ulint srv_max_n_threads;
+extern uint32_t srv_max_n_threads;
 
 /** Number of threads active. */
 extern std::atomic_int os_thread_count;

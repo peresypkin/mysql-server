@@ -1,7 +1,7 @@
 #ifndef SQL_ROW_ITERATOR_H_
 #define SQL_ROW_ITERATOR_H_
 
-/* Copyright (c) 2018, 2019, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2018, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -268,6 +268,7 @@ class TableRowIterator : public RowIterator {
   void SetNullRowFlag(bool is_null_row) override;
   void StartPSIBatchMode() override;
   void EndPSIBatchModeIfStarted() override;
+  std::vector<Child> children() const override;
 
  protected:
   int HandleError(int error);
@@ -284,5 +285,8 @@ class TableRowIterator : public RowIterator {
 // in textual form, if available.
 std::vector<std::string> FullDebugString(const THD *thd,
                                          const RowIterator &iterator);
+
+// Used to describe what kind of join an iterator is executing.
+enum class JoinType { INNER, OUTER, ANTI, SEMI };
 
 #endif  // SQL_ROW_ITERATOR_H_

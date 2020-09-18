@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1994, 2019, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 1994, 2020, Oracle and/or its affiliates. All Rights Reserved.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -302,7 +302,7 @@ static int cmp_gis_field(
     return (cmp_geometry_field(DATA_GEOMETRY, DATA_GIS_MBR, a, a_length, b,
                                b_length));
   } else {
-    return (rtree_key_cmp(mode, a, a_length, b, b_length, srs));
+    return (rtree_key_cmp(mode, a, a_length, b, b_length, srs) ? 0 : 1);
   }
 }
 
@@ -690,7 +690,7 @@ int cmp_dtuple_rec_with_match_low(const dtuple_t *dtuple, const rec_t *rec,
 }
 
 /** Get the pad character code point for a type.
-@param[in]	type
+@param[in]	type SQL data type
 @return		pad character code point
 @retval		ULINT_UNDEFINED if no padding is specified */
 UNIV_INLINE

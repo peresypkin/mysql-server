@@ -1,7 +1,7 @@
 #ifndef LEX_INCLUDED
 #define LEX_INCLUDED
 
-/* Copyright (c) 2000, 2019, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2000, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -94,6 +94,7 @@ static const SYMBOL symbols[] = {
     {SYM("ASCII", ASCII_SYM)},
     {SYM("ASENSITIVE", ASENSITIVE_SYM)},
     {SYM("AT", AT_SYM)},
+    {SYM("ATTRIBUTE", ATTRIBUTE_SYM)},
     {SYM("AUTO_INCREMENT", AUTO_INC)},
     {SYM("AUTOEXTEND_SIZE", AUTOEXTEND_SIZE_SYM)},
     {SYM("AVG", AVG_SYM)},
@@ -227,6 +228,7 @@ static const SYMBOL symbols[] = {
     {SYM("ENDS", ENDS_SYM)},
     {SYM("ENFORCED", ENFORCED_SYM)},
     {SYM("ENGINE", ENGINE_SYM)},
+    {SYM("ENGINE_ATTRIBUTE", ENGINE_ATTRIBUTE_SYM)},
     {SYM("ENGINES", ENGINES_SYM)},
     {SYM("ENUM", ENUM_SYM)},
     {SYM("ERROR", ERROR_SYM)},
@@ -343,6 +345,7 @@ static const SYMBOL symbols[] = {
     {SYM("JOIN", JOIN_SYM)},
     {SYM("JSON", JSON_SYM)},
     {SYM("JSON_TABLE", JSON_TABLE_SYM)},
+    {SYM("JSON_VALUE", JSON_VALUE_SYM)},
     {SYM("KEY", KEY_SYM)},
     {SYM("KEYS", KEYS)},
     {SYM("KEY_BLOCK_SIZE", KEY_BLOCK_SIZE)},
@@ -467,6 +470,7 @@ static const SYMBOL symbols[] = {
     {SYM("NUMERIC", NUMERIC_SYM)},
     {SYM("NVARCHAR", NVARCHAR_SYM)},
     {SYM("OF", OF_SYM)},
+    {SYM("OFF", OFF_SYM)},
     {SYM("OFFSET", OFFSET_SYM)},
     {SYM("OJ", OJ_SYM)},
     {SYM("OLD", OLD_SYM)},
@@ -568,6 +572,8 @@ static const SYMBOL symbols[] = {
     {SYM("REPEAT", REPEAT_SYM)},
     {SYM("REQUIRE", REQUIRE_SYM)},
     {SYM("REQUIRE_ROW_FORMAT", REQUIRE_ROW_FORMAT_SYM)},
+    {SYM("REQUIRE_TABLE_PRIMARY_KEY_CHECK",
+         REQUIRE_TABLE_PRIMARY_KEY_CHECK_SYM)},
     {SYM("RESET", RESET_SYM)},
     {SYM("RESPECT", RESPECT_SYM)},
     {SYM("RESIGNAL", RESIGNAL_SYM)},
@@ -579,6 +585,7 @@ static const SYMBOL symbols[] = {
     {SYM("RETAIN", RETAIN_SYM)},
     {SYM("RETURNED_SQLSTATE", RETURNED_SQLSTATE_SYM)},
     {SYM("RETURN", RETURN_SYM)},
+    {SYM("RETURNING", RETURNING_SYM)},
     {SYM("RETURNS", RETURNS_SYM)},
     {SYM("REUSE", REUSE_SYM)},
     {SYM("REVERSE", REVERSE_SYM)},
@@ -605,6 +612,7 @@ static const SYMBOL symbols[] = {
     {SYM("SECOND_MICROSECOND", SECOND_MICROSECOND_SYM)},
     {SYM("SECONDARY", SECONDARY_SYM)},
     {SYM("SECONDARY_ENGINE", SECONDARY_ENGINE_SYM)},
+    {SYM("SECONDARY_ENGINE_ATTRIBUTE", SECONDARY_ENGINE_ATTRIBUTE_SYM)},
     {SYM("SECONDARY_LOAD", SECONDARY_LOAD_SYM)},
     {SYM("SECONDARY_UNLOAD", SECONDARY_UNLOAD_SYM)},
     {SYM("SECURITY", SECURITY_SYM)},
@@ -668,6 +676,7 @@ static const SYMBOL symbols[] = {
     {SYM("STORAGE", STORAGE_SYM)},
     {SYM("STORED", STORED_SYM)},
     {SYM("STRAIGHT_JOIN", STRAIGHT_JOIN)},
+    {SYM("STREAM", STREAM_SYM)},
     {SYM("STRING", STRING_SYM)},
     {SYM("SUBCLASS_ORIGIN", SUBCLASS_ORIGIN_SYM)},
     {SYM("SUBJECT", SUBJECT_SYM)},
@@ -698,6 +707,7 @@ static const SYMBOL symbols[] = {
     {SYM("TINYBLOB", TINYBLOB_SYM)},
     {SYM("TINYINT", TINYINT_SYM)},
     {SYM("TINYTEXT", TINYTEXT_SYN)},
+    {SYM("TLS", TLS_SYM)},
     {SYM("TO", TO_SYM)},
     {SYM("TRAILING", TRAILING)},
     {SYM("TRANSACTION", TRANSACTION_SYM)},
@@ -845,6 +855,14 @@ static const SYMBOL symbols[] = {
     {SYM_H("SKIP_SCAN", SKIP_SCAN_HINT)},
     {SYM_H("NO_SKIP_SCAN", NO_SKIP_SCAN_HINT)},
     {SYM_H("HASH_JOIN", HASH_JOIN_HINT)},
-    {SYM_H("NO_HASH_JOIN", NO_HASH_JOIN_HINT)}};
+    {SYM_H("NO_HASH_JOIN", NO_HASH_JOIN_HINT)},
+    {SYM_H("INDEX", INDEX_HINT)},
+    {SYM_H("NO_INDEX", NO_INDEX_HINT)},
+    {SYM_H("JOIN_INDEX", JOIN_INDEX_HINT)},
+    {SYM_H("NO_JOIN_INDEX", NO_JOIN_INDEX_HINT)},
+    {SYM_H("GROUP_INDEX", GROUP_INDEX_HINT)},
+    {SYM_H("NO_GROUP_INDEX", NO_GROUP_INDEX_HINT)},
+    {SYM_H("ORDER_INDEX", ORDER_INDEX_HINT)},
+    {SYM_H("NO_ORDER_INDEX", NO_ORDER_INDEX_HINT)}};
 
 #endif /* LEX_INCLUDED */

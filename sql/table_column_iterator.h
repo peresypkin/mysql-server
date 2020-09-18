@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2019, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2019, 2020, Oracle and/or its affiliates.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -99,7 +99,8 @@ class Table_columns_view {
   template <typename U = ExclusionFilter>
   Table_columns_view(
       typename std::enable_if<std::is_same<
-          U, std::function<bool(TABLE const *, size_t)>>::value>::type * = 0);
+          U, std::function<bool(TABLE const *, size_t)>>::value>::type * =
+          nullptr);
   /**
     Constructor that takes the target `TABLE` object, only available when the
     predicate type is a lambda function.
@@ -148,12 +149,12 @@ class Table_columns_view {
    */
   Table_columns_view &set_filter(ExclusionFilter rhs);
 
-  //--> Deleted constructors and methods to remove default move/copy semantics
+  // --> Deleted constructors and methods to remove default move/copy semantics
   Table_columns_view(const Table_columns_view &rhs) = delete;
   Table_columns_view(Table_columns_view &&rhs) = delete;
   Table_columns_view &operator=(const Table_columns_view &rhs) = delete;
   Table_columns_view &operator=(Table_columns_view &&rhs) = delete;
-  //<--
+  // <--
 
   /**
     Iterator class to allow iterating over the replicatable fields in a TABLE
@@ -463,7 +464,9 @@ Table_columns_view<F> &Table_columns_view<F>::translate_bitmap(
   for (size_t d = 0, s = 0; d != destination.n_bits && s != source.n_bits;
        ++d) {
     if (!this->is_excluded(d)) {
-      if (bitmap_is_set(&source, s)) bitmap_set_bit(&destination, d);
+      if (bitmap_is_set(&source, static_cast<uint>(s))) {
+        bitmap_set_bit(&destination, static_cast<uint>(d));
+      }
       ++s;
     }
   }
@@ -525,8 +528,9 @@ Table_columns_view<F>::iterator::iterator(const iterator &rhs) {
 }
 
 template <typename F>
-typename Table_columns_view<F>::iterator &Table_columns_view<F>::iterator::
-operator=(const Table_columns_view<F>::iterator &rhs) {
+typename Table_columns_view<F>::iterator &
+Table_columns_view<F>::iterator::operator=(
+    const Table_columns_view<F>::iterator &rhs) {
   this->m_parent = rhs.m_parent;
   this->m_absolute_pos = rhs.m_absolute_pos;
   this->m_filtered_pos = rhs.m_filtered_pos;
@@ -534,8 +538,8 @@ operator=(const Table_columns_view<F>::iterator &rhs) {
 }
 
 template <typename F>
-typename Table_columns_view<F>::iterator &Table_columns_view<F>::iterator::
-operator++() {
+typename Table_columns_view<F>::iterator &
+Table_columns_view<F>::iterator::operator++() {
   if (this->m_parent->m_table != nullptr &&
       this->m_absolute_pos !=
           static_cast<long>(this->m_parent->absolute_size())) {
@@ -551,7 +555,7 @@ operator++() {
 
 template <typename F>
 typename Table_columns_view<F>::iterator::reference
-    Table_columns_view<F>::iterator::operator*() const {
+Table_columns_view<F>::iterator::operator*() const {
   if (this->m_parent->m_table != nullptr &&
       this->m_absolute_pos !=
           static_cast<long>(this->m_parent->absolute_size())) {
@@ -561,8 +565,8 @@ typename Table_columns_view<F>::iterator::reference
 }
 
 template <typename F>
-typename Table_columns_view<F>::iterator Table_columns_view<F>::iterator::
-operator++(int) {
+typename Table_columns_view<F>::iterator
+Table_columns_view<F>::iterator::operator++(int) {
   typename Table_columns_view<F>::iterator to_return = (*this);
   ++(*this);
   return to_return;
@@ -570,7 +574,7 @@ operator++(int) {
 
 template <typename F>
 typename Table_columns_view<F>::iterator::pointer
-    Table_columns_view<F>::iterator::operator->() const {
+Table_columns_view<F>::iterator::operator->() const {
   return this->operator*();
 }
 
@@ -588,8 +592,8 @@ bool Table_columns_view<F>::iterator::operator!=(
 }
 
 template <typename F>
-typename Table_columns_view<F>::iterator &Table_columns_view<F>::iterator::
-operator--() {
+typename Table_columns_view<F>::iterator &
+Table_columns_view<F>::iterator::operator--() {
   if (this->m_parent->m_table != nullptr && this->m_absolute_pos != 0) {
     do {
       --this->m_absolute_pos;
@@ -601,8 +605,8 @@ operator--() {
 }
 
 template <typename F>
-typename Table_columns_view<F>::iterator Table_columns_view<F>::iterator::
-operator--(int) {
+typename Table_columns_view<F>::iterator
+Table_columns_view<F>::iterator::operator--(int) {
   typename Table_columns_view<F>::iterator to_return = (*this);
   --(*this);
   return to_return;

@@ -1,4 +1,4 @@
-# Copyright (c) 2000, 2019, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2000, 2020, Oracle and/or its affiliates.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License, version 2.0,
@@ -33,7 +33,6 @@
 %{!?runselftest:%global runselftest 1}
 
 %{!?product_suffix:              %global product_suffix community}
-%{!?feature_set:                 %global feature_set community}
 %{!?compilation_comment_release: %global compilation_comment_release MySQL Community - GPL}
 %{!?compilation_comment_debug:   %global compilation_comment_debug MySQL Community - GPL - Debug}
 %{!?compilation_comment_server_release: %global compilation_comment_server_release MySQL Community Server - GPL}
@@ -55,7 +54,7 @@ Name:           mysql%{?cluster:-cluster}-%{product_suffix}
 Summary:        A very fast and reliable SQL database server
 Version:        @MYSQL_NO_DASH_VERSION@
 Release:        10@MYSQL_VERSION_EXTRA_DOT@%{?dist}
-License:        Copyright (c) 2000, @MYSQL_COPYRIGHT_YEAR@, %{mysql_vendor}. All rights reserved. Under %{?license_type} license as shown in the Description field.
+License:        Copyright (c) 2000, @MYSQL_COPYRIGHT_YEAR@, %{mysql_vendor}. Under %{?license_type} license as shown in the Description field.
 Source0:        https://cdn.mysql.com/Downloads/MySQL-@MYSQL_BASE_VERSION@/%{src_dir}.tar.gz
 Source1:        https://downloads.sourceforge.net/boost/@BOOST_PACKAGE_NAME@.tar.bz2
 URL:            http://www.mysql.com/
@@ -115,10 +114,10 @@ BuildRequires:  zlib-devel
 BuildRequires: /usr/bin/pathfix.py
 %endif
 # For rpm => 4.9 only: https://fedoraproject.org/wiki/Packaging:AutoProvidesAndRequiresFiltering
-%global _privatelibs libprotobuf.*
+%global _privatelibs libprotobuf.*|libmysqlharness.so.*|libmysqlrouter.so.*|libmysqlrouter_http.*\.so\..*
 %global _privateperl perl\\((GD|hostnames|lib::mtr|lib::v1|mtr_|My::)
 %global __requires_exclude ^((%{_privatelibs})|(%{_privateperl}))
-%global __provides_exclude_from ^(/usr/share/(mysql|mysql-test)/.*|%{_libdir}/mysql/plugin/.*\\.so|%{_libdir}/mysql/private/.*|%{_libdir}/mysqlrouter/.*)$
+%global __provides_exclude_from ^(/usr/share/(mysql|mysql-test)/.*|%{_libdir}/mysql/plugin/.*\\.so|%{_libdir}/mysql/private/.*|%{_libdir}/mysqlrouter/.*|%{_libdir}/mysqlrouter/private/.*)$
 
 %description
 The MySQL(TM) software delivers a very fast, multi-threaded, multi-user,
@@ -222,8 +221,10 @@ Summary:        MySQL database client applications and tools
 %if 0%{?commercial}
 Obsoletes:      mysql-community-client < %{version}-%{release}
 Requires:       mysql-commercial-libs%{?_isa} >= %{min}
+Conflicts:      mysql-commercial-server < 8.0.21
 %else
 Requires:       mysql-community-libs%{?_isa} >= %{min}
+Conflicts:      mysql-community-server < 8.0.21
 %endif
 Obsoletes:      mariadb
 Obsoletes:      community-mysql < %{version}-%{release}
@@ -317,6 +318,7 @@ Requires:       openssl-devel
 %endif
 Obsoletes:      mariadb-devel
 Obsoletes:      mariadb-connector-c-devel
+Obsoletes:      mariadb-embedded-devel
 Obsoletes:      community-mysql-devel < %{version}-%{release}
 Obsoletes:      mysql-devel < %{version}-%{release}
 Provides:       mysql-devel = %{version}-%{release}
@@ -488,6 +490,7 @@ mkdir debug
            -DWITH_MECAB=system \
            -DCMAKE_C_FLAGS="$optflags" \
            -DCMAKE_CXX_FLAGS="$optflags" \
+           -DUSE_LD_LLD=0 \
            -DWITH_SYSTEMD=1 \
 %if 0%{?cluster:1}
            -DWITH_NDBCLUSTER=1 \
@@ -500,11 +503,8 @@ mkdir debug
 %endif
            -DWITH_INNODB_MEMCACHED=1 \
            -DSYSTEMD_PID_DIR="/run/mysqld" \
-           -DROUTER_INSTALL_LIBDIR="%{_lib}" \
-           -DROUTER_INSTALL_PLUGINDIR="%{_lib}/mysqlrouter" \
            -DMYSQL_UNIX_ADDR="%{mysqldatadir}/mysql.sock" \
            -DMYSQLX_UNIX_ADDR="/run/mysqld/mysqlx.sock" \
-           -DFEATURE_SET="%{feature_set}" \
            -DWITH_NUMA=ON \
            -DCOMPILATION_COMMENT="%{compilation_comment_debug}" \
            -DCOMPILATION_COMMENT_SERVER="%{compilation_comment_server_debug}" \
@@ -526,6 +526,7 @@ mkdir release
            -DWITH_MECAB=system \
            -DCMAKE_C_FLAGS="%{optflags}" \
            -DCMAKE_CXX_FLAGS="%{optflags}" \
+           -DUSE_LD_LLD=0 \
            -DWITH_SYSTEMD=1 \
 %if 0%{?cluster:1}
            -DWITH_NDBCLUSTER=1 \
@@ -538,11 +539,8 @@ mkdir release
 %endif
            -DWITH_INNODB_MEMCACHED=1 \
            -DSYSTEMD_PID_DIR="/run/mysqld" \
-           -DROUTER_INSTALL_LIBDIR="%{_lib}" \
-           -DROUTER_INSTALL_PLUGINDIR="%{_lib}/mysqlrouter" \
            -DMYSQL_UNIX_ADDR="%{mysqldatadir}/mysql.sock" \
            -DMYSQLX_UNIX_ADDR="/run/mysqld/mysqlx.sock" \
-           -DFEATURE_SET="%{feature_set}" \
            -DWITH_NUMA=ON \
            -DCOMPILATION_COMMENT="%{compilation_comment_release}" \
            -DCOMPILATION_COMMENT_SERVER="%{compilation_comment_server_release}" \
@@ -602,11 +600,6 @@ fi
 rm -rf %{buildroot}%{_infodir}/mysql.info*
 rm -rf %{buildroot}%{_datadir}/mysql-*/mysql.server
 rm -rf %{buildroot}%{_datadir}/mysql-*/mysqld_multi.server
-
-# remove some unwanted router files
-rm -rf %{buildroot}/%{_libdir}/libmysqlharness.{a,so}
-rm -rf %{buildroot}/%{_libdir}/libmysqlrouter.so
-rm -rf %{buildroot}/%{_libdir}/libmysqlrouter_http.so
 
 %check
 %if 0%{?runselftest} || 0%{?with_unittests}
@@ -683,7 +676,6 @@ rm -r $(readlink var) var
 %config(noreplace) %{_sysconfdir}/my.cnf
 %dir %{_sysconfdir}/my.cnf.d
 
-%attr(755, root, root) %{_bindir}/comp_err
 %attr(755, root, root) %{_bindir}/innochecksum
 %attr(755, root, root) %{_bindir}/ibd2sdi
 %attr(755, root, root) %{_bindir}/my_print_defaults
@@ -703,13 +695,12 @@ rm -r $(readlink var) var
 %attr(755, root, root) %{_sbindir}/mysqld
 
 %dir %{_libdir}/mysql/private
-%attr(755, root, root) %{_libdir}/mysql/private/libprotobuf-lite.so.3.6.1
-%attr(755, root, root) %{_libdir}/mysql/private/libprotobuf.so.3.6.1
+%attr(755, root, root) %{_libdir}/mysql/private/libprotobuf-lite.so.3.11.4
+%attr(755, root, root) %{_libdir}/mysql/private/libprotobuf.so.3.11.4
 
 %dir %{_libdir}/mysql/plugin
 %attr(755, root, root) %{_libdir}/mysql/plugin/adt_null.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/auth_socket.so
-%attr(755, root, root) %{_libdir}/mysql/plugin/authentication_ldap_sasl_client.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/group_replication.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/component_log_sink_syseventlog.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/component_log_sink_json.so
@@ -756,7 +747,6 @@ rm -r $(readlink var) var
 %dir %{_libdir}/mysql/plugin/debug
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/adt_null.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/auth_socket.so
-%attr(755, root, root) %{_libdir}/mysql/plugin/debug/authentication_ldap_sasl_client.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/group_replication.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_log_sink_syseventlog.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_log_sink_json.so
@@ -838,6 +828,8 @@ rm -r $(readlink var) var
 %attr(644, root, root) %{_mandir}/man1/mysqlslap.1*
 %attr(644, root, root) %{_mandir}/man1/mysql_config_editor.1*
 
+%attr(755, root, root) %{_libdir}/mysql/plugin/authentication_ldap_sasl_client.so
+
 %if 0%{?cluster}
 %attr(755, root, root) %{_bindir}/ndb_blob_tool
 %attr(755, root, root) %{_bindir}/ndb_config
@@ -900,7 +892,6 @@ rm -r $(readlink var) var
 
 %files -f devel.list devel
 %doc %{?license_files_server}
-%attr(644, root, root) %{_mandir}/man1/comp_err.1*
 %attr(644, root, root) %{_mandir}/man1/mysql_config.1*
 %{_includedir}/mysql
 %if 0%{?cluster}
@@ -921,11 +912,13 @@ rm -r $(readlink var) var
 %files test
 %doc %{?license_files_server}
 %attr(-, root, root) %{_datadir}/mysql-test
+%attr(755, root, root) %{_bindir}/comp_err
 %attr(755, root, root) %{_bindir}/mysql_client_test
 %attr(755, root, root) %{_bindir}/mysqld_safe
 %attr(755, root, root) %{_bindir}/mysqltest
 %attr(755, root, root) %{_bindir}/mysqltest_safe_process
 %attr(755, root, root) %{_bindir}/mysqlxtest
+%attr(644, root, root) %{_mandir}/man1/comp_err.1*
 
 %attr(755, root, root) %{_libdir}/mysql/plugin/auth.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/auth_test_plugin.so
@@ -946,6 +939,7 @@ rm -r $(readlink var) var
 %attr(755, root, root) %{_libdir}/mysql/plugin/component_test_host_application_signal.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/component_test_mysql_current_thread_reader.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/component_test_mysql_runtime_error.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/component_test_component_deinit.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/component_udf_reg_3_func.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/component_udf_reg_avg_func.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/component_udf_reg_int_func.so
@@ -1005,6 +999,7 @@ rm -r $(readlink var) var
 %attr(755, root, root) %{_libdir}/mysql/plugin/component_mysqlx_global_reset.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/auth.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/auth_test_plugin.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/debug/authentication_ldap_sasl_client.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_example_component1.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_example_component2.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_example_component3.so
@@ -1022,6 +1017,7 @@ rm -r $(readlink var) var
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_test_host_application_signal.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_test_mysql_current_thread_reader.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_test_mysql_runtime_error.so
+%attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_test_component_deinit.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_udf_reg_3_func.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_udf_reg_avg_func.so
 %attr(755, root, root) %{_libdir}/mysql/plugin/debug/component_udf_reg_int_func.so
@@ -1142,15 +1138,22 @@ rm -r $(readlink var) var
 %attr(644, root, root) %{_mandir}/man1/mysqlrouter_plugin_info.1*
 %{_unitdir}/mysqlrouter.service
 %{_tmpfilesdir}/mysqlrouter.conf
-%{_libdir}/libmysqlharness.so.*
-%{_libdir}/libmysqlrouter.so.*
-%{_libdir}/libmysqlrouter_http.so.*
+%{_libdir}/mysqlrouter/private/libmysqlharness.so.*
+%{_libdir}/mysqlrouter/private/libmysqlrouter.so.*
+%{_libdir}/mysqlrouter/private/libmysqlrouter_http.so.*
+%{_libdir}/mysqlrouter/private/libmysqlrouter_http_auth_backend.so.*
+%{_libdir}/mysqlrouter/private/libmysqlrouter_http_auth_realm.so.*
+%{_libdir}/mysqlrouter/private/libprotobuf-lite.so.3.11.4
 %dir %{_libdir}/mysqlrouter
-%{_libdir}/mysqlrouter/*.so*
+%dir %{_libdir}/mysqlrouter/private
+%{_libdir}/mysqlrouter/*.so
 %dir %attr(755, mysqlrouter, mysqlrouter) /var/log/mysqlrouter
 %dir %attr(755, mysqlrouter, mysqlrouter) /run/mysqlrouter
 
 %changelog
+* Mon May 11 2020 Murthy Sidagam <venkata.sidagam@oracle.com> - 8.0.21-1
+- Added component_test_component_deinit.so test component
+
 * Wed Aug 14 2019 Rahul Sisondia <rahul.sisondia@oracle.com> - 8.0.19-1
 - Added component_test_udf_services test component
 - Added back support for cluster
@@ -1547,8 +1550,7 @@ rm -r $(readlink var) var
 
 * Mon Nov 16 2009 Joerg Bruehe <joerg.bruehe@sun.com>
 
-- Fix some problems with the directives around "tcmalloc" (experimental),
-  remove erroneous traces of the InnoDB plugin (that is 5.1 only).
+- remove erroneous traces of the InnoDB plugin (that is 5.1 only).
 
 * Tue Oct 06 2009 Magnus Blaudd <mvensson@mysql.com>
 

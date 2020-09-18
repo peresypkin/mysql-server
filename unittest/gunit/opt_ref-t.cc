@@ -1,4 +1,4 @@
-/* Copyright (c) 2013, 2019, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2013, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -47,7 +47,7 @@ bool scrap_bool;  // Needed by Key_field CTOR.
 class Fake_key_field : public Key_field {
  public:
   Fake_key_field()
-      : Key_field(NULL, NULL, 0, 0, false, false, &scrap_bool, 0) {}
+      : Key_field(nullptr, nullptr, 0, 0, false, false, &scrap_bool, 0) {}
 };
 
 /*
@@ -60,10 +60,10 @@ class Fake_key_field : public Key_field {
 class OptRefTest : public ::testing::Test {
  public:
   OptRefTest()
-      : field_t1_a("field1", true),
-        field_t1_b("field2", true),
-        field_t2_a("field3", true),
-        field_t2_b("field4", true),
+      : field_t1_a("field1", true, false),
+        field_t1_b("field2", true, false),
+        field_t2_a("field3", true, false),
+        field_t2_b("field4", true, false),
         t1(&field_t1_a, &field_t1_b),
         t2(&field_t2_a, &field_t2_b),
         t1_key_fields(&t1_key_field_arr[0]) {
@@ -72,11 +72,11 @@ class OptRefTest : public ::testing::Test {
 
     t1_join_tab.set_qs(&t1_qep_shared);
     t1_join_tab.set_table(&t1);
+    t1_table_list.select_lex = t1.pos_in_table_list->select_lex;
     t1.pos_in_table_list = &t1_table_list;
-    t1.pos_in_table_list->select_lex = &t1.select_lex;
 
     t1_table_list.table = &t1;
-    t1_table_list.embedding = NULL;
+    t1_table_list.embedding = nullptr;
     t1_table_list.derived_keys_ready = true;
     t1_table_list.set_tableno(0);
   }
@@ -125,8 +125,8 @@ class OptRefTest : public ::testing::Test {
 
   void call_add_key_fields(Item *cond) {
     uint and_level = 0;
-    (void)add_key_fields(thd(), NULL /* join */, &t1_key_fields, &and_level,
-                         cond, ~0ULL, NULL);
+    (void)add_key_fields(thd(), nullptr /* join */, &t1_key_fields, &and_level,
+                         cond, ~0ULL, nullptr);
   }
 
  private:

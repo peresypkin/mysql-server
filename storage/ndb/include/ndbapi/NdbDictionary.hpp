@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2003, 2018, Oracle and/or its affiliates. All rights reserved.
+   Copyright (c) 2003, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -220,6 +220,7 @@ public:
       PartitionBalance_ForRAByNode = NDB_PARTITION_BALANCE_FOR_RA_BY_NODE,
     };
 
+    Object(const Object&) = default;
   private:
     Object&operator=(const Object&);
   };
@@ -2298,6 +2299,7 @@ public:
        * @struct  Element
        * @brief   Object to be stored in an NdbDictionary::Dictionary::List
        */
+      List& operator=(const List&) = default;
       struct Element {
 	unsigned id;            ///< Id of object
         Object::Type type;      ///< Type of object
@@ -2513,7 +2515,7 @@ public:
     /**
      * Start table optimization given defined table object
      * @param t Object of table to optimize
-     * @param Pre-allocated OptimizeTableHandle
+     * @param h Pre-allocated OptimizeTableHandle
      * @return 0 if successful otherwise -1.
      */
     int
@@ -2522,7 +2524,7 @@ public:
     /**
      * Start index optimization given defined index object
      * @param ind Object of index to optimize
-     * @param Pre-allocated OptimizeIndexHandle
+     * @param h Pre-allocated OptimizeIndexHandle
      * @return 0 if successful otherwise -1.
      */
     int

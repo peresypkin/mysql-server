@@ -1,4 +1,4 @@
-/* Copyright (c) 2016, 2019, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2016, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -31,6 +31,7 @@
 #include "nullable.h"
 #include "sql/gis/srid.h"
 #include "sql/item_timefunc.h"
+#include "sql/parse_tree_helpers.h"  // move_cf_appliers
 #include "sql/parse_tree_node_base.h"
 #include "sql/sql_alter.h"
 #include "sql/sql_check_constraint.h"  // Sql_check_constraint_spec
@@ -50,7 +51,7 @@ using Mysql::Nullable;
 */
 struct Column_parse_context : public Parse_context {
   const bool is_generated;  ///< Owner column is a generated one.
-
+  std::vector<CreateFieldApplier> cf_appliers;
   Column_parse_context(THD *thd_arg, SELECT_LEX *select_arg, bool is_generated)
       : Parse_context(thd_arg, select_arg), is_generated(is_generated) {}
 };
@@ -331,7 +332,7 @@ class PT_on_update_column_attr : public PT_column_attr_base {
     if (super::contextualize(pc)) return true;
 
     item = new (pc->thd->mem_root) Item_func_now_local(precision);
-    return item == NULL;
+    return item == nullptr;
   }
 };
 
@@ -497,11 +498,11 @@ class PT_type : public Parse_tree_node {
 
  public:
   virtual ulong get_type_flags() const { return 0; }
-  virtual const char *get_length() const { return NULL; }
-  virtual const char *get_dec() const { return NULL; }
-  virtual const CHARSET_INFO *get_charset() const { return NULL; }
+  virtual const char *get_length() const { return nullptr; }
+  virtual const char *get_dec() const { return nullptr; }
+  virtual const CHARSET_INFO *get_charset() const { return nullptr; }
   virtual uint get_uint_geom_type() const { return 0; }
-  virtual List<String> *get_interval_list() const { return NULL; }
+  virtual List<String> *get_interval_list() const { return nullptr; }
 };
 
 /**
@@ -545,7 +546,7 @@ class PT_numeric_type : public PT_type {
                   ulong options)
       : PT_type(static_cast<enum_field_types>(type_arg)),
         length(length),
-        dec(0),
+        dec(nullptr),
         options(options) {
     DBUG_ASSERT((options & ~(UNSIGNED_FLAG | ZEROFILL_FLAG)) == 0);
 
@@ -610,7 +611,7 @@ class PT_char_type : public PT_type {
         length(length),
         charset(charset),
         force_binary(force_binary) {
-    DBUG_ASSERT(charset == NULL || !force_binary);
+    DBUG_ASSERT(charset == nullptr || !force_binary);
   }
   PT_char_type(Char_type char_type, const CHARSET_INFO *charset,
                bool force_binary = false)
@@ -647,10 +648,10 @@ class PT_blob_type : public PT_type {
   PT_blob_type(Blob_type blob_type, const CHARSET_INFO *charset,
                bool force_binary = false)
       : PT_type(static_cast<Parent_type>(blob_type)),
-        length(NULL),
+        length(nullptr),
         charset(charset),
         force_binary(force_binary) {
-    DBUG_ASSERT(charset == NULL || !force_binary);
+    DBUG_ASSERT(charset == nullptr || !force_binary);
   }
   explicit PT_blob_type(const char *length)
       : PT_type(MYSQL_TYPE_BLOB),
@@ -762,7 +763,7 @@ class PT_spacial_type : public PT_type {
 
   const CHARSET_INFO *get_charset() const override { return &my_charset_bin; }
   uint get_uint_geom_type() const override { return geo_type; }
-  const char *get_length() const override { return NULL; }
+  const char *get_length() const override { return nullptr; }
 };
 
 enum class Enum_type { ENUM = MYSQL_TYPE_ENUM, SET = MYSQL_TYPE_SET };
@@ -782,7 +783,7 @@ class PT_enum_type_tmpl : public PT_type {
         interval_list(interval_list),
         charset(charset),
         force_binary(force_binary) {
-    DBUG_ASSERT(charset == NULL || !force_binary);
+    DBUG_ASSERT(charset == nullptr || !force_binary);
   }
 
   const CHARSET_INFO *get_charset() const override { return charset; }
@@ -862,9 +863,9 @@ class PT_field_def_base : public Parse_tree_node {
       : has_explicit_collation(false),
         alter_info_flags(0),
         comment(EMPTY_CSTR),
-        default_value(NULL),
-        on_update_value(NULL),
-        gcol_info(NULL),
+        default_value(nullptr),
+        on_update_value(nullptr),
+        gcol_info(nullptr),
         default_val_info(nullptr),
         type_node(type_node) {}
 
@@ -889,7 +890,7 @@ class PT_field_def_base : public Parse_tree_node {
   template <class T>
   bool contextualize_attrs(Column_parse_context *pc,
                            Mem_root_array<T *> *attrs) {
-    if (attrs != NULL) {
+    if (attrs != nullptr) {
       for (auto attr : *attrs) {
         if (attr->contextualize(pc)) return true;
         attr->apply_type_flags(&type_flags);
@@ -925,7 +926,11 @@ class PT_field_def : public PT_field_def_base {
 
   bool contextualize(Parse_context *pc_arg) override {
     Column_parse_context pc(pc_arg->thd, pc_arg->select, false);
-    return super::contextualize(&pc) || contextualize_attrs(&pc, opt_attrs);
+    if (super::contextualize(&pc) || contextualize_attrs(&pc, opt_attrs))
+      return true;
+
+    move_cf_appliers(pc_arg, &pc);
+    return false;
   }
 };
 
@@ -957,7 +962,7 @@ class PT_generated_field_def : public PT_field_def_base {
       return true;
 
     gcol_info = new (pc.mem_root) Value_generator;
-    if (gcol_info == NULL) return true;  // OOM
+    if (gcol_info == nullptr) return true;  // OOM
     gcol_info->expr_item = expr;
     if (virtual_or_stored == Virtual_or_stored::STORED)
       gcol_info->set_field_stored(true);
@@ -966,5 +971,7 @@ class PT_generated_field_def : public PT_field_def_base {
     return false;
   }
 };
+
+void move_cf_appliers(Parse_context *tddlpc, Column_parse_context *cpc);
 
 #endif /* PARSE_TREE_COL_ATTRS_INCLUDED */

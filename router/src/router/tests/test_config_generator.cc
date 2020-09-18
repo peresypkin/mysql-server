@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2016, 2019, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2016, 2020, Oracle and/or its affiliates. All rights reserved.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -31,6 +31,7 @@
 #include <stdexcept>
 #include <streambuf>
 #include "keyring/keyring_manager.h"
+#include "mysql/harness/stdx/expected.h"
 #ifndef _WIN32
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -162,6 +163,18 @@ using mysql_harness::delete_dir_recursive;
 using mysql_harness::delete_file;
 using mysqlrouter::ConfigGenerator;
 
+static void common_pass_setup_session(MySQLSessionReplayer *m) {
+  m->expect_execute(
+      "SET @@SESSION.autocommit=1, @@SESSION.character_set_client=utf8, "
+      "@@SESSION.character_set_results=utf8, "
+      "@@SESSION.character_set_connection=utf8, "
+      "@@SESSION.sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_"
+      "DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION', "
+      "@@SESSION.optimizer_switch='derived_merge=on'");
+
+  m->expect_execute("SET @@SESSION.group_replication_consistency='EVENTUAL'");
+}
+
 static void common_pass_schema_version(MySQLSessionReplayer *m) {
   m->expect_query_one(
       "SELECT * FROM mysql_innodb_cluster_metadata.schema_version");
@@ -179,8 +192,8 @@ static void common_pass_cluster_type(MySQLSessionReplayer *m) {
 
 static void common_pass_metadata_supported(MySQLSessionReplayer *m) {
   m->expect_query_one(
-      "select ((select count(*) from "
-      "mysql_innodb_cluster_metadata.v2_gr_clusters)=1) as has_one_gr_cluster");
+      "select count(*) from "
+      "mysql_innodb_cluster_metadata.v2_gr_clusters");
   m->then_return(1, {// has_one_gr_cluster
                      {m->string_or_null("1")}});
 }
@@ -218,6 +231,7 @@ static void common_pass_member_is_primary(MySQLSessionReplayer *m) {
 
 static void common_pass_metadata_checks(MySQLSessionReplayer *m) {
   m->clear_expects();
+  common_pass_setup_session(m);
   common_pass_schema_version(m);
   common_pass_cluster_type(m);
   common_pass_metadata_supported(m);
@@ -302,6 +316,7 @@ TEST_F(ConfigGeneratorTest, metadata_checks_invalid_data) {
   {
     ConfigGenerator config_gen;
 
+    common_pass_setup_session(mock_mysql.get());
     mock_mysql->expect_query_one(
         "SELECT * FROM mysql_innodb_cluster_metadata.schema_version");
     mock_mysql->then_return(1, {// major, [minor missing]
@@ -315,15 +330,15 @@ TEST_F(ConfigGeneratorTest, metadata_checks_invalid_data) {
 
   {
     ConfigGenerator config_gen;
+    common_pass_setup_session(mock_mysql.get());
     common_pass_schema_version(mock_mysql.get());
     common_pass_cluster_type(mock_mysql.get());
     // invalid number of values returned from query for metadata support
     mock_mysql->expect_query_one(
-        "select ((select count(*) from "
-        "mysql_innodb_cluster_metadata.v2_gr_clusters)=1) as "
-        "has_one_gr_cluster");
+        "select count(*) from "
+        "mysql_innodb_cluster_metadata.v2_gr_clusters");
     mock_mysql->then_return(0,
-                            {// [has_one_gr_cluster missing]
+                            {// [count(*) missing]
                              {}});
 
     ASSERT_THROW_LIKE(
@@ -336,6 +351,7 @@ TEST_F(ConfigGeneratorTest, metadata_checks_invalid_data) {
   {
     ConfigGenerator config_gen;
 
+    common_pass_setup_session(mock_mysql.get());
     common_pass_schema_version(mock_mysql.get());
     common_pass_cluster_type(mock_mysql.get());
     common_pass_metadata_supported(mock_mysql.get());
@@ -355,6 +371,7 @@ TEST_F(ConfigGeneratorTest, metadata_checks_invalid_data) {
   {
     ConfigGenerator config_gen;
 
+    common_pass_setup_session(mock_mysql.get());
     common_pass_schema_version(mock_mysql.get());
     common_pass_cluster_type(mock_mysql.get());
     common_pass_metadata_supported(mock_mysql.get());
@@ -1465,6 +1482,8 @@ TEST_F(ConfigGeneratorTest, create_config) {
            "user=cluster_user\n"
            "metadata_cluster=mycluster\n"
            "ttl=0.5\n"
+           "auth_cache_ttl=-1\n"
+           "auth_cache_refresh_interval=2\n"
            "use_gr_notifications=0\n"
            "\n"
            "[routing:mycluster_myreplicaset_rw]\n"
@@ -1536,6 +1555,8 @@ TEST_F(ConfigGeneratorTest, create_config) {
            "user=cluster_user\n"
            "metadata_cluster=mycluster\n"
            "ttl=0.5\n"
+           "auth_cache_ttl=-1\n"
+           "auth_cache_refresh_interval=2\n"
            "use_gr_notifications=0\n"
            "\n"
            "[routing:mycluster_myreplicaset_rw]\n"
@@ -1610,6 +1631,8 @@ TEST_F(ConfigGeneratorTest, create_config) {
            "user=cluster_user\n"
            "metadata_cluster=mycluster\n"
            "ttl=0.5\n"
+           "auth_cache_ttl=-1\n"
+           "auth_cache_refresh_interval=2\n"
            "use_gr_notifications=0\n"
            "\n"
            "[routing:mycluster_myreplicaset_rw]\n"
@@ -1687,6 +1710,8 @@ TEST_F(ConfigGeneratorTest, create_config) {
            "user=cluster_user\n"
            "metadata_cluster=mycluster\n"
            "ttl=0.5\n"
+           "auth_cache_ttl=-1\n"
+           "auth_cache_refresh_interval=2\n"
            "use_gr_notifications=0\n"
            "\n"
            "[routing:mycluster_myreplicaset_rw]\n"
@@ -1766,6 +1791,8 @@ TEST_F(ConfigGeneratorTest, create_config) {
            "user=cluster_user\n"
            "metadata_cluster=mycluster\n"
            "ttl=0.5\n"
+           "auth_cache_ttl=-1\n"
+           "auth_cache_refresh_interval=2\n"
            "use_gr_notifications=0\n"
            "\n"
            "[routing:mycluster_myreplicaset_rw]\n"
@@ -1854,6 +1881,8 @@ TEST_F(ConfigGeneratorTest, create_config) {
            "user=cluster_user\n"
            "metadata_cluster=mycluster\n"
            "ttl=0.5\n"
+           "auth_cache_ttl=-1\n"
+           "auth_cache_refresh_interval=2\n"
            "use_gr_notifications=0\n"
            "\n"
            "[routing:mycluster_myreplicaset_rw]\n"
@@ -2560,7 +2589,6 @@ TEST_F(ConfigGeneratorTest, bootstrap_overwrite) {
 static void test_key_length(
     MySQLSessionReplayer *mock_mysql, const std::string &key,
     const std::map<std::string, std::string> &default_paths) {
-  using std::placeholders::_1;
   ::testing::InSequence s;
 
   mysqlrouter::set_prompt_password(
@@ -3004,6 +3032,7 @@ TEST_F(ConfigGeneratorTest, ssl_stage3_create_config) {
   // bootstrap options).
 
   ConfigGenerator config_gen;
+  common_pass_setup_session(mock_mysql.get());
   common_pass_schema_version(mock_mysql.get());
   common_pass_cluster_type(mock_mysql.get());
   common_pass_metadata_supported(mock_mysql.get());
@@ -3763,28 +3792,34 @@ class MockSocketOperations : public mysql_harness::SocketOperationsBase {
 
   // we don't call these, but we need to provide an implementation (they're pure
   // virtual)
-  MOCK_METHOD3(read, ssize_t(int, void *, size_t));
-  MOCK_METHOD3(write, ssize_t(int, void *, size_t));
-  MOCK_METHOD1(close, void(int));
-  MOCK_METHOD1(shutdown, void(int));
-  MOCK_METHOD1(freeaddrinfo, void(addrinfo *ai));
-  MOCK_METHOD4(getaddrinfo,
-               int(const char *, const char *, const addrinfo *, addrinfo **));
-  MOCK_METHOD3(bind, int(int, const struct sockaddr *, socklen_t));
-  MOCK_METHOD3(socket, int(int, int, int));
-  MOCK_METHOD5(setsockopt, int(int, int, int, const void *, socklen_t));
-  MOCK_METHOD2(listen, int(int fd, int n));
-  MOCK_METHOD3(poll, int(struct pollfd *, nfds_t, std::chrono::milliseconds));
-  MOCK_METHOD4(inetntop, const char *(int af, const void *, char *, socklen_t));
-  MOCK_METHOD3(getpeername, int(int, struct sockaddr *, socklen_t *));
+  MOCK_METHOD3(read, result<size_t>(mysql_harness::socket_t, void *, size_t));
+  MOCK_METHOD3(write,
+               result<size_t>(mysql_harness::socket_t, const void *, size_t));
+  MOCK_METHOD1(close, result<void>(mysql_harness::socket_t));
+  MOCK_METHOD1(shutdown, result<void>(mysql_harness::socket_t));
+  MOCK_METHOD3(getaddrinfo,
+               addrinfo_result(const char *, const char *, const addrinfo *));
+  MOCK_METHOD3(bind, result<void>(mysql_harness::socket_t,
+                                  const struct sockaddr *, size_t));
+  MOCK_METHOD3(connect, result<void>(mysql_harness::socket_t,
+                                     const struct sockaddr *, size_t));
+  MOCK_METHOD3(socket, result<mysql_harness::socket_t>(int, int, int));
+  MOCK_METHOD5(setsockopt, result<void>(mysql_harness::socket_t, int, int,
+                                        const void *, size_t));
+  MOCK_METHOD2(listen, result<void>(mysql_harness::socket_t fd, int n));
+  MOCK_METHOD3(poll, result<size_t>(struct pollfd *, size_t,
+                                    std::chrono::milliseconds));
+  MOCK_METHOD4(inetntop,
+               result<const char *>(int af, const void *, char *, size_t));
+  MOCK_METHOD3(getpeername, result<void>(mysql_harness::socket_t,
+                                         struct sockaddr *, size_t *));
   MOCK_METHOD2(connect_non_blocking_wait,
-               int(mysql_harness::socket_t sock,
-                   std::chrono::milliseconds timeout));
-  MOCK_METHOD2(connect_non_blocking_status, int(int sock, int &so_error));
-  MOCK_METHOD2(set_socket_blocking, void(int, bool));
-  MOCK_METHOD1(set_errno, void(int err));
-  MOCK_METHOD0(get_errno, int());
-  MOCK_METHOD0(get_error_code, std::error_code());
+               result<void>(mysql_harness::socket_t sock,
+                            std::chrono::milliseconds timeout));
+  MOCK_METHOD1(connect_non_blocking_status,
+               result<void>(mysql_harness::socket_t sock));
+  MOCK_METHOD2(set_socket_blocking,
+               result<void>(mysql_harness::socket_t, bool));
 };
 
 /**

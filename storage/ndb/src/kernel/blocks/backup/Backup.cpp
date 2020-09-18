@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2003, 2019, Oracle and/or its affiliates. All rights reserved.
+   Copyright (c) 2003, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -87,7 +87,7 @@ static const Uint32 WaitScanTempErrorRetryMillis = 10;
 static NDB_TICKS startTime;
 
 #if (defined(VM_TRACE) || defined(ERROR_INSERT))
-#define DEBUG_LCP 1
+//#define DEBUG_LCP 1
 //#define DEBUG_LCP_ROW 1
 //#define DEBUG_LCP_DEL_FILES 1
 //#define DEBUG_LCP_DEL 1
@@ -2488,48 +2488,6 @@ Backup::execCONTINUEB(Signal* signal)
 	       GetTabInfoReq::SignalLength, JBB);
     return;
   }
-  case BackupContinueB::ZDELAY_SCAN_NEXT:
-  {
-    if (ERROR_INSERTED(10039))
-    {
-      jam();
-      sendSignalWithDelay(reference(), GSN_CONTINUEB, signal, 300, 
-			  signal->getLength());
-      return;
-    }
-    else
-    {
-      jam();
-      CLEAR_ERROR_INSERT_VALUE;
-      ndbout_c("Resuming backup");
-
-      Uint32 filePtr_I = Tdata1;
-      BackupFilePtr filePtr;
-      c_backupFilePool.getPtr(filePtr, filePtr_I);
-      BackupRecordPtr ptr;
-      c_backupPool.getPtr(ptr, filePtr.p->backupPtr);
-      TablePtr tabPtr;
-      ndbrequire(findTable(ptr, tabPtr, filePtr.p->tableId));
-      FragmentPtr fragPtr;
-      tabPtr.p->fragments.getPtr(fragPtr, filePtr.p->fragmentNo);
-
-      BlockReference lqhRef = 0;
-      if (ptr.p->is_lcp()) {
-        lqhRef = calcInstanceBlockRef(DBLQH);
-      } else {
-        const Uint32 instanceKey = fragPtr.p->lqhInstanceKey;
-        ndbrequire(instanceKey != 0);
-        lqhRef = numberToRef(DBLQH, instanceKey, getOwnNodeId());
-      }
-
-      memmove(signal->theData, signal->theData + 2, 
-	      4*ScanFragNextReq::SignalLength);
-
-      sendSignal(lqhRef, GSN_SCAN_NEXTREQ, signal, 
-		 ScanFragNextReq::SignalLength, JBB);
-      return ;
-    }
-  }
   case BackupContinueB::ZGET_NEXT_FRAGMENT:
   {
     BackupRecordPtr backupPtr;
@@ -4610,9 +4568,21 @@ Backup::haveAllSignals(BackupRecordPtr ptr, Uint32 gsn, Uint32 nodeId)
   ndbrequire(ptr.p->masterRef == reference());
   ndbrequire(ptr.p->masterData.gsn == gsn);
   ndbrequire(!ptr.p->masterData.sendCounter.done());
-  ndbrequire(ptr.p->masterData.sendCounter.isWaitingFor(nodeId));
-  
-  ptr.p->masterData.sendCounter.clearWaitingFor(nodeId);
+  if (ptr.p->masterData.sendCounter.isWaitingFor(nodeId))
+  {
+    ptr.p->masterData.sendCounter.clearWaitingFor(nodeId);
+  }
+  else
+  {
+    ndbrequire(ptr.p->errorCode == AbortBackupOrd::BackupFailureDueToNodeFail);
+    if (ERROR_INSERTED(10051) || ERROR_INSERTED(10052) ||
+        ERROR_INSERTED(10053))
+    {
+      ndbout_c("Received duplicate signal from non-master node %u for gsn %u",
+               nodeId, gsn);
+      CLEAR_ERROR_INSERT_VALUE;
+    }
+  }
   return ptr.p->masterData.sendCounter.done();
 }
 
@@ -4732,6 +4702,26 @@ Backup::execDEFINE_BACKUP_CONF(Signal* signal)
 void
 Backup::defineBackupReply(Signal* signal, BackupRecordPtr ptr, Uint32 nodeId)
 {
+  if (ERROR_INSERTED(10051))
+  {
+    if (nodeId == getOwnNodeId())
+    {
+      jam();
+      ndbrequire(ptr.p->errorCode == 0)
+      // Delay reply from self so that master waits for DEFINE_BACKUP_REFs
+      sendSignalWithDelay(reference(), GSN_DEFINE_BACKUP_CONF, signal,
+                          5000, signal->getLength());
+      return;
+    }
+    else
+    {
+      // Received DEFINE_BACKUP_REF/CONF from node n1, now crash n1. This will
+      // trigger node-failure handling where master sends DEFINE_BACKUP_REF to
+      // self on behalf of n1. So master receives 2 REFs from n1.
+      signal->theData[0] = 9999;
+      sendSignal(numberToRef(CMVMI, nodeId), GSN_NDB_TAMPER, signal, 1, JBB);
+    }
+  }
   if (!haveAllSignals(ptr, GSN_DEFINE_BACKUP_REQ, nodeId)) {
     jam();
     return;
@@ -5100,6 +5090,26 @@ Backup::execSTART_BACKUP_CONF(Signal* signal)
 void
 Backup::startBackupReply(Signal* signal, BackupRecordPtr ptr, Uint32 nodeId)
 {
+  if (ERROR_INSERTED(10052))
+  {
+    if (nodeId == getOwnNodeId())
+    {
+      jam();
+      ndbrequire(ptr.p->errorCode == 0)
+      // Delay reply from self so that master waits for START_BACKUP_REFs
+      sendSignalWithDelay(reference(), GSN_START_BACKUP_CONF, signal,
+                          5000, signal->getLength());
+      return;
+    }
+    else
+    {
+      // Received START_BACKUP_REF/CONF from node n1, now crash n1. This will
+      // trigger node-failure handling where master sends START_BACKUP_REF to
+      // self on behalf of n1. So master receives 2 REFs from n1.
+      signal->theData[0] = 9999;
+      sendSignal(numberToRef(CMVMI, nodeId), GSN_NDB_TAMPER, signal, 1, JBB);
+    }
+  }
 
   CRASH_INSERTION((10004));
 
@@ -5758,6 +5768,26 @@ Backup::execSTOP_BACKUP_CONF(Signal* signal)
 void
 Backup::stopBackupReply(Signal* signal, BackupRecordPtr ptr, Uint32 nodeId)
 {
+  if (ERROR_INSERTED(10053))
+  {
+    if (nodeId == getOwnNodeId())
+    {
+      jam();
+      ndbrequire(ptr.p->errorCode == 0)
+      // Delay reply from self so that master waits for STOP_BACKUP_REFs
+      sendSignalWithDelay(reference(), GSN_STOP_BACKUP_CONF, signal,
+                          5000, signal->getLength());
+      return;
+    }
+    else
+    {
+      // Received STOP_BACKUP_REF/CONF from node n1, now crash n1. This will
+      // trigger node-failure handling where master sends STOP_BACKUP_REF to
+      // self on behalf of n1. So master receives 2 REFs from n1.
+      signal->theData[0] = 9999;
+      sendSignal(numberToRef(CMVMI, nodeId), GSN_NDB_TAMPER, signal, 1, JBB);
+    }
+  }
   CRASH_INSERTION((10013));
 
   if (!haveAllSignals(ptr, GSN_STOP_BACKUP_REQ, nodeId)) {
@@ -7547,6 +7577,12 @@ Backup::execBACKUP_FRAGMENT_REQ(Signal* signal)
   {
     jam();
     /* Backup path */
+    if (ERROR_INSERTED(10039))
+    {
+      sendSignalWithDelay(reference(), GSN_BACKUP_FRAGMENT_REQ, signal,
+                          300, signal->getLength());
+      return;
+    }
     /* Get Table */
     ndbrequire(findTable(ptr, tabPtr, tableId));
   }
@@ -9882,23 +9918,6 @@ Backup::checkScan(Signal* signal,
     req->batch_size_rows= ZRESERVED_SCAN_BATCH_SIZE;
     req->batch_size_bytes= 0;
 
-    if (ERROR_INSERTED(10039) && 
-	filePtr.p->tableId >= 2 &&
-	filePtr.p->operation.noOfRecords > 0 &&
-        !ptr.p->is_lcp())
-    {
-      ndbout_c("halting backup for table %d fragment: %d after %llu records",
-	       filePtr.p->tableId,
-	       filePtr.p->fragmentNo,
-	       filePtr.p->operation.noOfRecords);
-      memmove(signal->theData+2, signal->theData, 
-	      4*ScanFragNextReq::SignalLength);
-      signal->theData[0] = BackupContinueB::ZDELAY_SCAN_NEXT;
-      signal->theData[1] = filePtr.i;
-      sendSignalWithDelay(reference(), GSN_CONTINUEB, signal, 
-			  300, 2+ScanFragNextReq::SignalLength);
-      return;
-    }
     if(ERROR_INSERTED(10032))
       sendSignalWithDelay(lqhRef, GSN_SCAN_NEXTREQ, signal, 
 			  100, ScanFragNextReq::SignalLength);
@@ -15117,20 +15136,19 @@ Backup::start_execute_lcp(Signal *signal,
                             ptr.p->m_lcp_max_page_cnt);
   Uint32 newestGci = c_lqh->get_lcp_newest_gci();
 
-#ifdef DEBUG_LCP_STAT
-  TablePtr debTabPtr;
   FragmentPtr fragPtr;
-  ptr.p->tables.first(debTabPtr);
-  debTabPtr.p->fragments.getPtr(fragPtr, 0);
+  ptr.p->tables.first(tabPtr);
+  tabPtr.p->fragments.getPtr(fragPtr, 0);
+#ifdef DEBUG_LCP_STAT
   DEB_LCP_STAT((
            "(%u)TAGY LCP_Start: tab(%u,%u).%u, row_count: %llu,"
            " row_change_count: %llu,"
            " prev_row_count: %llu,"
            " memory_used_in_bytes: %llu, max_page_cnt: %u, LCP lsn: %llu",
            instance(),
-           debTabPtr.p->tableId,
+           tabPtr.p->tableId,
            fragPtr.p->fragmentId,
-           c_lqh->getCreateSchemaVersion(debTabPtr.p->tableId),
+           c_lqh->getCreateSchemaVersion(ttabPtr.p->tableId),
            ptr.p->m_row_count,
            ptr.p->m_row_change_count,
            ptr.p->m_prev_row_count,
@@ -15142,7 +15160,9 @@ Backup::start_execute_lcp(Signal *signal,
   if (ptr.p->m_row_change_count == 0 &&
       ptr.p->preparePrevLcpId != 0 &&
       (ptr.p->prepareMaxGciWritten == newestGci &&
-       m_our_node_started))
+       m_our_node_started) &&
+      c_pgman->idle_fragment_lcp(tabPtr.p->tableId,
+                                 fragPtr.p->fragmentId))
   {
     /**
      * We don't handle it as an idle LCP when it is the first LCP

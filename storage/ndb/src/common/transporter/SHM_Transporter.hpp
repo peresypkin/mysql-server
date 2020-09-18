@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2003, 2019, Oracle and/or its affiliates. All rights reserved.
+   Copyright (c) 2003, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -41,6 +41,7 @@ class SHM_Transporter : public Transporter {
   friend class TransporterRegistry;
 public:
   SHM_Transporter(TransporterRegistry &,
+                  TrpId transporterIndex,
 		  const char *lHostName,
 		  const char *rHostName, 
 		  int r_port,
@@ -55,7 +56,10 @@ public:
 		  bool preSendChecksum,
                   Uint32 spintime,
                   Uint32 send_buffer_size);
-  
+
+  SHM_Transporter(TransporterRegistry &,
+                  const SHM_Transporter*);
+ 
   /**
    * SHM destructor
    */
@@ -103,7 +107,6 @@ protected:
    * -# Attach to it
    * -# Wait for someone to attach (max wait = timeout), then rerun again
    *    until connection established.
-   * @param timeOutMillis - the time to sleep before (ms) trying again.
    * @returns - True if the server managed to hook up with the client,
    *            i.e., both agrees that the other one has setup the segment.
    *            Otherwise false.
@@ -117,7 +120,6 @@ protected:
    * -# Check if the segment is setup
    * -# Check if the server set it up
    * -# If all clear, return.
-   * @param timeOutMillis - the time to sleep before (ms) trying again.
    * @returns - True if the client managed to hook up with the server,
    *            i.e., both agrees that the other one has setup the segment.
    *            Otherwise false.
@@ -172,11 +174,6 @@ protected:
   int m_remote_pid;
   Uint32 m_signal_threshold;
 
-  Uint32 m_spintime;
-  Uint32 get_spintime()
-  {
-    return m_spintime;
-  }
 private:
   bool _shmSegCreated;
   bool _attached;

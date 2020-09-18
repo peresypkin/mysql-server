@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2011, 2018, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2006, 2020, Oracle and/or its affiliates. All rights reserved.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -163,10 +163,10 @@ extern bool fts_enable_diag_print;
 typedef float fts_rank_t;
 
 /** Structure to manage FTS AUX table name and MDL during its drop */
-typedef struct {
+struct aux_name_vec_t {
   /** AUX table name */
   std::vector<char *> aux_name;
-} aux_name_vec_t;
+};
 
 /** Type of a row during a transaction. FTS_NOTHING means the row can be
 forgotten from the FTS system's POV, FTS_INVALID is an internal value used
@@ -430,7 +430,6 @@ extern bool fts_need_sync;
 /** Variable specifying the table that has Fulltext index to display its
 content through information schema table */
 extern char *fts_internal_tbl_name;
-extern char *fts_internal_tbl_name2;
 
 #define fts_que_graph_free(graph) \
   do {                            \
@@ -579,7 +578,7 @@ bool fts_drop_dd_tables(const aux_name_vec_t *aux_vec, bool file_per_table);
 
 /** Free FTS AUX table names in vector
 @param[in]	aux_vec		aux table name vector
-@return true on success, false on failure. */
+*/
 void fts_free_aux_names(aux_name_vec_t *aux_vec);
 
 /** The given transaction is about to be committed; do whatever is necessary

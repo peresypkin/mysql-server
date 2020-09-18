@@ -1,4 +1,4 @@
-# Copyright (c) 2000, 2019, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2000, 2020, Oracle and/or its affiliates.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License, version 2.0,
@@ -38,7 +38,6 @@
 %{!?runselftest:%global runselftest 0}
 
 %{!?product_suffix:              %global product_suffix community}
-%{!?feature_set:                 %global feature_set community}
 %{!?compilation_comment_release: %global compilation_comment_release MySQL Community - GPL}
 %{!?compilation_comment_debug:   %global compilation_comment_debug MySQL Community - GPL - Debug}
 %{!?compilation_comment_server_release: %global compilation_comment_server_release MySQL Community Server - GPL}
@@ -68,23 +67,23 @@ Source0:        https://cdn.mysql.com/Downloads/MySQL-@MYSQL_BASE_VERSION@/%{src
 Source1:        https://downloads.sourceforge.net/boost/@BOOST_PACKAGE_NAME@.tar.bz2
 %if 0%{?rhel} >= 8
 BuildRequires:  cmake >= 3.6.1
-BuildRequires:  gcc
-BuildRequires:  gcc-c++
 BuildRequires:  libtirpc-devel
 BuildRequires:  rpcgen
 %else
 BuildRequires:  cmake3 >= 3.6.1
-BuildRequires:  devtoolset-8-gcc
-BuildRequires:  devtoolset-8-gcc-c++
 %endif
+%{?el6:BuildRequires:  devtoolset-8-gcc}
+%{?el6:BuildRequires:  devtoolset-8-gcc-c++}
+%{?el7:BuildRequires:  devtoolset-9-gcc}
+%{?el7:BuildRequires:  devtoolset-9-gcc-c++}
+%{?el8:BuildRequires:  gcc-toolset-9-gcc}
+%{?el8:BuildRequires:  gcc-toolset-9-gcc-c++}
 BuildRequires:  bison >= 2.1
-BuildRequires:  perl
-BuildRequires:  perl(Time::HiRes)
-BuildRequires:  perl(Env)
 BuildRequires:  time
 BuildRequires:  cyrus-sasl-devel
 BuildRequires:  libaio-devel
 %if 0%{?commercial}
+BuildRequires:  krb5-devel
 BuildRequires:  libcurl-devel
 %endif
 BuildRequires:  ncurses-devel
@@ -173,11 +172,11 @@ mkdir release
 	   -DWITH_BOOST=.. \
            -DCMAKE_C_FLAGS="%{optflags}" \
            -DCMAKE_CXX_FLAGS="%{optflags}" \
+           -DUSE_LD_LLD=0 \
            -DWITH_INNODB_MEMCACHED=1 \
            -DINSTALL_MYSQLTESTDIR="" \
            -DMYSQL_UNIX_ADDR="%{mysqldatadir}/mysql.sock" \
            -DMYSQLX_UNIX_ADDR="/var/run/mysqld/mysqlx.sock" \
-           -DFEATURE_SET="%{feature_set}" \
            -DWITH_ROUTER=OFF \
            -DWITH_NUMA=OFF \
            %{?mecab_option} \
@@ -224,7 +223,7 @@ for f in innochecksum ibd2sdi myisamchk myisam_ftdump myisamlog myisampack \
          my_safe_process mysqlbinlog mysqlcheck mysql_client_test \
          mysql_config_editor mysqld_multi mysqld_safe mysqldumpslow mysqlimport \
          mysql_secure_installation mysqlshow mysqlslap mysqltest mysqltest_safe_process mysqlxtest \
-         perror lz4_decompress zlib_decompress ; do
+         comp_err perror lz4_decompress zlib_decompress ; do
     rm -f %{buildroot}%{_bindir}/$f
 done
 
@@ -255,6 +254,7 @@ for p in \
          component_test_host_application_signal.so \
          component_test_mysql_current_thread_reader.so \
          component_test_mysql_runtime_error.so \
+         component_test_component_deinit.so \
          component_test_page_track_component.so \
          component_test_pfs_notification.so \
          component_test_pfs_resource_group.so \
@@ -311,6 +311,7 @@ rm -f %{buildroot}%{_datadir}/mysql-*/{mysql.server,mysqld_multi.server,mysql-lo
 rm -rf %{buildroot}/usr/share/mysql-*/mcc
 rm -f %{buildroot}/lib/memcached_path.pl
 rm -f %{buildroot}/%{_libdir}/mysql/libndbclient*
+rm -f %{buildroot}/%{_bindir}/memclient
 rm -rf %{buildroot}%{_datadir}/mysql-*/nodejs/
 rm -rf %{buildroot}%{_datadir}/mysql-*/java/
 %endif
@@ -359,14 +360,12 @@ rm -r $(readlink var) var
 %attr(755, root, root) %{_sbindir}/ndb_mgmd
 %attr(755, root, root) %{_sbindir}/ndbd
 %attr(755, root, root) %{_sbindir}/ndbmtd
-%attr(755, root, root) %{_bindir}/memclient
 %attr(755, root, root) %{_sbindir}/memcached
 %attr(755, root, root) %{_libdir}/mysql/ndb_engine.so
 %{_datadir}/mysql-*/memcache-api/
 %endif
 
 %attr(755, root, root) %{_sbindir}/mysqld
-%attr(755, root, root) %{_bindir}/comp_err
 %attr(755, root, root) %{_bindir}/mysql
 %attr(755, root, root) %{_bindir}/mysqladmin
 %attr(755, root, root) %{_bindir}/mysqldump
@@ -378,8 +377,8 @@ rm -r $(readlink var) var
 %attr(755, root, root) %{_bindir}/my_print_defaults
 
 %dir %{_libdir}/mysql/private
-%attr(755, root, root) %{_libdir}/mysql/private/libprotobuf-lite.so.3.6.1
-%attr(755, root, root) %{_libdir}/mysql/private/libprotobuf.so.3.6.1
+%attr(755, root, root) %{_libdir}/mysql/private/libprotobuf-lite.so.3.11.4
+%attr(755, root, root) %{_libdir}/mysql/private/libprotobuf.so.3.11.4
 
 %dir %{_libdir}/mysql/plugin
 %attr(755, root, root) %{_libdir}/mysql/plugin/adt_null.so
@@ -471,6 +470,9 @@ rm -r $(readlink var) var
 %dir %attr(750, mysql, mysql) /var/lib/mysql-keyring
 
 %changelog
+* Wed Jan 8 2020 Piotr Obrzut <piotr.obrzut@oracle.com> - 8.0.20-1
+- Remove Perl dependency for cluster
+
 * Wed Aug 14 2019 Rahul Sisondia <rahul.sisondia@oracle.com> - 8.0.19-1
 - Added component_test_udf_services test component
 
@@ -880,8 +882,7 @@ rm -r $(readlink var) var
 
 * Mon Nov 16 2009 Joerg Bruehe <joerg.bruehe@sun.com>
 
-- Fix some problems with the directives around "tcmalloc" (experimental),
-  remove erroneous traces of the InnoDB plugin (that is 5.1 only).
+- remove erroneous traces of the InnoDB plugin (that is 5.1 only).
 
 * Tue Oct 06 2009 Magnus Blaudd <mvensson@mysql.com>
 

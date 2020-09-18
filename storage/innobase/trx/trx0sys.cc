@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2019, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 1996, 2020, Oracle and/or its affiliates. All Rights Reserved.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -35,6 +35,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 #include "current_thd.h"
 #include "ha_prototypes.h"
+#include "mysql/plugin.h"
 #include "sql_error.h"
 #include "trx0sys.h"
 
@@ -54,7 +55,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "trx0undo.h"
 
 /** The transaction system */
-trx_sys_t *trx_sys = NULL;
+trx_sys_t *trx_sys = nullptr;
 
 /** Check whether transaction id is valid.
 @param[in]	id	transaction id to check
@@ -74,7 +75,7 @@ void ReadView::check_trx_id_sanity(trx_id_t id, const table_name_t &name) {
         << " system-wide maximum.";
     ut_ad(0);
     THD *thd = current_thd;
-    if (thd != NULL) {
+    if (thd != nullptr) {
       char table_name[MAX_FULL_NAME_LEN + 1];
 
       innobase_format_name(table_name, sizeof(table_name), name.m_name);
@@ -142,7 +143,7 @@ void trx_sys_get_binlog_prepared(std::vector<trx_id_t> &trx_ids) {
     return;
   }
   /* Check and find binary log prepared transaction. */
-  for (auto trx = UT_LIST_GET_FIRST(trx_sys->rw_trx_list); trx != NULL;
+  for (auto trx = UT_LIST_GET_FIRST(trx_sys->rw_trx_list); trx != nullptr;
        trx = UT_LIST_GET_NEXT(trx_list, trx)) {
     assert_trx_in_rw_list(trx);
     if (trx_state_eq(trx, TRX_STATE_PREPARED) && trx_is_mysql_xa(trx)) {
@@ -419,7 +420,7 @@ purge_pq_t *trx_sys_init_at_db_start(void) {
   purge when we init the purge sub-system. Purge is responsible
   for freeing the binary heap. */
   purge_queue = UT_NEW_NOKEY(purge_pq_t());
-  ut_a(purge_queue != NULL);
+  ut_a(purge_queue != nullptr);
 
   if (srv_force_recovery < SRV_FORCE_NO_UNDO_LOG_SCAN) {
     /* Create the memory objects for all the rollback segments
@@ -468,7 +469,7 @@ purge_pq_t *trx_sys_init_at_db_start(void) {
   if (UT_LIST_GET_LEN(trx_sys->rw_trx_list) > 0) {
     const trx_t *trx;
 
-    for (trx = UT_LIST_GET_FIRST(trx_sys->rw_trx_list); trx != NULL;
+    for (trx = UT_LIST_GET_FIRST(trx_sys->rw_trx_list); trx != nullptr;
          trx = UT_LIST_GET_NEXT(trx_list, trx)) {
       ut_ad(trx->is_recovered);
       assert_trx_in_rw_list(trx);
@@ -501,7 +502,7 @@ purge_pq_t *trx_sys_init_at_db_start(void) {
 
 /** Creates the trx_sys instance and initializes purge_queue and mutex. */
 void trx_sys_create(void) {
-  ut_ad(trx_sys == NULL);
+  ut_ad(trx_sys == nullptr);
 
   trx_sys = static_cast<trx_sys_t *>(ut_zalloc_nokey(sizeof(*trx_sys)));
 
@@ -545,7 +546,7 @@ Shutdown/Close the transaction system. */
 void trx_sys_close(void) {
   ut_ad(srv_shutdown_state.load() == SRV_SHUTDOWN_EXIT_THREADS);
 
-  if (trx_sys == NULL) {
+  if (trx_sys == nullptr) {
     return;
   }
 
@@ -558,19 +559,19 @@ void trx_sys_close(void) {
   }
 
   sess_close(trx_dummy_sess);
-  trx_dummy_sess = NULL;
+  trx_dummy_sess = nullptr;
 
   trx_purge_sys_close();
 
-  /* Free the double write data structures. */
-  buf_dblwr_free();
+  /* Only prepared or active-recovered transactions may be left in the system.
+  The active-recovered transactions are allowed only if we did not force to
+  rollback them during shutdown (which might happen if e.g. it is fast
+  shutdown). Free all of them. */
+  trx_sys_after_background_threads_shutdown_validate();
 
-  /* Only prepared transactions may be left in the system. Free them. */
-  ut_a(UT_LIST_GET_LEN(trx_sys->rw_trx_list) == trx_sys->n_prepared_trx);
-
-  for (trx_t *trx = UT_LIST_GET_FIRST(trx_sys->rw_trx_list); trx != NULL;
+  for (trx_t *trx = UT_LIST_GET_FIRST(trx_sys->rw_trx_list); trx != nullptr;
        trx = UT_LIST_GET_FIRST(trx_sys->rw_trx_list)) {
-    trx_free_prepared(trx);
+    trx_free_prepared_or_active_recovered(trx);
   }
 
   /* There can't be any active transactions. */
@@ -593,68 +594,61 @@ void trx_sys_close(void) {
 
   ut_free(trx_sys);
 
-  trx_sys = NULL;
+  trx_sys = nullptr;
 }
 
-/** @brief Convert an undo log to TRX_UNDO_PREPARED state on shutdown.
-
-If any prepared ACTIVE transactions exist, and their rollback was
-prevented by innodb_force_recovery, we convert these transactions to
-XA PREPARE state in the main-memory data structures, so that shutdown
-will proceed normally. These transactions will again recover as ACTIVE
-on the next restart, and they will be rolled back unless
-innodb_force_recovery prevents it again.
-
-@param[in]	trx	transaction
-@param[in,out]	undo	undo log to convert to TRX_UNDO_PREPARED */
-static void trx_undo_fake_prepared(const trx_t *trx, trx_undo_t *undo) {
-  ut_ad(srv_force_recovery >= SRV_FORCE_NO_TRX_UNDO);
-  ut_ad(trx_state_eq(trx, TRX_STATE_ACTIVE));
-  ut_ad(trx->is_recovered);
-
-  if (undo != NULL) {
-    ut_ad(undo->state == TRX_UNDO_ACTIVE);
-    undo->state = TRX_UNDO_PREPARED;
-  }
-}
-
-/*********************************************************************
-Check if there are any active (non-prepared) transactions.
-@return total number of active transactions or 0 if none */
-ulint trx_sys_any_active_transactions(void) {
+void trx_sys_before_pre_dd_shutdown_validate() {
+  /** All connections are closed and close_connection unregisters
+  associated trx from mysql_trx_list. We still might have some non
+  started transactions in mysql_trx_list. */
   trx_sys_mutex_enter();
+  for (trx_t *trx = UT_LIST_GET_FIRST(trx_sys->mysql_trx_list); trx != nullptr;
+       trx = UT_LIST_GET_NEXT(mysql_trx_list, trx)) {
+    ut_a(trx->state == TRX_STATE_NOT_STARTED);
+  }
+  trx_sys_mutex_exit();
+}
 
-  ulint total_trx = UT_LIST_GET_LEN(trx_sys->mysql_trx_list);
+void trx_sys_after_pre_dd_shutdown_validate() {
+  trx_sys_before_pre_dd_shutdown_validate();
 
-  if (total_trx == 0) {
-    total_trx = UT_LIST_GET_LEN(trx_sys->rw_trx_list);
-    ut_a(total_trx >= trx_sys->n_prepared_trx);
+  /** Additionally, the only left transactions are those that have
+  state == TRX_STATE_PREPARED, unless we didn't expect to rollback
+  all recovered transactions (e.g. fast shutdown) in which case we
+  could also have some transactions with is_recovered == true and
+  state == TRX_STATE_ACTIVE. */
 
-    if (total_trx > trx_sys->n_prepared_trx &&
-        srv_force_recovery >= SRV_FORCE_NO_TRX_UNDO) {
-      for (trx_t *trx = UT_LIST_GET_FIRST(trx_sys->rw_trx_list); trx != NULL;
-           trx = UT_LIST_GET_NEXT(trx_list, trx)) {
-        if (!trx_state_eq(trx, TRX_STATE_ACTIVE) || !trx->is_recovered) {
-          continue;
-        }
-        /* This was a recovered transaction whose rollback was disabled by
-        the innodb_force_recovery setting. Pretend that it is in XA PREPARE
-        state so that shutdown will work. */
-        trx_undo_fake_prepared(trx, trx->rsegs.m_redo.insert_undo);
-        trx_undo_fake_prepared(trx, trx->rsegs.m_redo.update_undo);
-        trx_undo_fake_prepared(trx, trx->rsegs.m_noredo.insert_undo);
-        trx_undo_fake_prepared(trx, trx->rsegs.m_noredo.update_undo);
-        trx->state = TRX_STATE_PREPARED;
-        trx_sys->n_prepared_trx++;
-      }
-    }
-
-    ut_a(total_trx >= trx_sys->n_prepared_trx);
-    total_trx -= trx_sys->n_prepared_trx;
+  const auto active_recovered_trxs = trx_sys_recovered_active_trxs_count();
+  if (srv_shutdown_waits_for_rollback_of_recovered_transactions()) {
+    ut_a(active_recovered_trxs == 0);
   }
 
+  trx_sys_mutex_enter();
+  ut_a(UT_LIST_GET_LEN(trx_sys->rw_trx_list) ==
+       trx_sys->n_prepared_trx + active_recovered_trxs);
   trx_sys_mutex_exit();
+}
 
+void trx_sys_after_background_threads_shutdown_validate() {
+  trx_sys_after_pre_dd_shutdown_validate();
+
+  trx_sys_mutex_enter();
+  ut_a(UT_LIST_GET_LEN(trx_sys->mysql_trx_list) == 0);
+  trx_sys_mutex_exit();
+}
+
+size_t trx_sys_recovered_active_trxs_count() {
+  size_t total_trx = 0;
+  trx_sys_mutex_enter();
+  /* Recovered transactions are never citizens of mysql_trx_list,
+  so it's enough to check rw_trx_list. */
+  for (trx_t *trx = UT_LIST_GET_FIRST(trx_sys->rw_trx_list); trx != nullptr;
+       trx = UT_LIST_GET_NEXT(trx_list, trx)) {
+    if (trx_state_eq(trx, TRX_STATE_ACTIVE) && trx->is_recovered) {
+      total_trx++;
+    }
+  }
+  trx_sys_mutex_exit();
   return (total_trx);
 }
 
@@ -665,16 +659,16 @@ static bool trx_sys_validate_trx_list_low(
     trx_ut_list_t *trx_list) /*!< in: &trx_sys->rw_trx_list */
 {
   const trx_t *trx;
-  const trx_t *prev_trx = NULL;
+  const trx_t *prev_trx = nullptr;
 
   ut_ad(trx_sys_mutex_own());
 
   ut_ad(trx_list == &trx_sys->rw_trx_list);
 
-  for (trx = UT_LIST_GET_FIRST(*trx_list); trx != NULL;
+  for (trx = UT_LIST_GET_FIRST(*trx_list); trx != nullptr;
        prev_trx = trx, trx = UT_LIST_GET_NEXT(trx_list, prev_trx)) {
     check_trx_state(trx);
-    ut_a(prev_trx == NULL || prev_trx->id > trx->id);
+    ut_a(prev_trx == nullptr || prev_trx->id > trx->id);
   }
 
   return (true);

@@ -1,4 +1,4 @@
-/* Copyright (c) 2002, 2019, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2002, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -232,7 +232,7 @@ bool Common_table_expr::substitute_recursive_reference(THD *thd,
   if (t == nullptr) return true; /* purecov: inspected */
   // Eliminate the dummy unit:
   tl->derived_unit()->exclude_tree(thd);
-  tl->set_derived_unit(NULL);
+  tl->set_derived_unit(nullptr);
   tl->set_privileges(SELECT_ACL);
   return false;
 }
@@ -287,6 +287,9 @@ bool TABLE_LIST::resolve_derived(THD *thd, bool apply_semijoin) {
 
   if (!is_view_or_derived() || is_merged() || is_table_function()) return false;
 
+  // This early return can be deleted after WL#6570.
+  if (derived->is_prepared()) return false;
+
   // Dummy derived tables for recursive references disappear before this stage
   DBUG_ASSERT(this != select_lex->recursive_reference);
 
@@ -302,7 +305,7 @@ bool TABLE_LIST::resolve_derived(THD *thd, bool apply_semijoin) {
   if (is_view())  // but views cannot.
     for (SELECT_LEX *sl = derived->first_select(); sl; sl = sl->next_select()) {
       // Make sure there are no outer references
-      DBUG_ASSERT(sl->context.outer_context == NULL);
+      DBUG_ASSERT(sl->context.outer_context == nullptr);
     }
 #endif
 
@@ -345,7 +348,7 @@ bool TABLE_LIST::resolve_derived(THD *thd, bool apply_semijoin) {
       it to have more than one recursive SELECT.
     */
     bool previous_is_recursive = false;
-    SELECT_LEX *last_non_recursive = NULL;
+    SELECT_LEX *last_non_recursive = nullptr;
     for (SELECT_LEX *sl = derived->first_select(); sl; sl = sl->next_select()) {
       if (sl->is_recursive()) {
         if (sl->is_ordered() || sl->has_limit() || sl->is_distinct()) {
@@ -409,11 +412,45 @@ bool TABLE_LIST::resolve_derived(THD *thd, bool apply_semijoin) {
 
   /*
     Prepare the underlying query expression of the derived table.
-    The SELECT_STRAIGHT_JOIN option prevents semi-join transformation.
   */
   if (derived->prepare(thd, derived_result,
-                       !apply_semijoin ? SELECT_STRAIGHT_JOIN : 0, 0))
+                       !apply_semijoin ? SELECT_NO_SEMI_JOIN : 0, 0))
     return true;
+
+  if (m_was_table_subquery) {
+    /*
+      When we converted the quantified subquery to a derived table, we gave
+      names to the SELECT list items. But if those were from a view, then
+      rollback_item_tree_changes restored original items, losing the names.
+      We have to re-establish our names. Likewise, if we replaced items with 1
+      (case of EXISTS), they may have been lost.
+      todo remove after WL#6570.
+    */
+    SELECT_LEX *subs_select = derived->first_select();
+    DBUG_ASSERT(!subs_select->first_execution);
+    char buff[NAME_LEN];
+    int i = -1;
+    Item *inner;
+    List_iterator<Item> it_fields_list(subs_select->fields_list);
+    List_iterator<Item> it_all_fields(subs_select->all_fields);
+    while ((i++, it_all_fields++, inner = it_fields_list++)) {
+      if (i < m_first_sj_inner_expr_of_subquery && !inner->basic_const_item()) {
+        // replace with 1; we do it before derived->prepare(), so this will
+        // propagate to all_fields and base_ref_items.
+        auto constant = new (thd->mem_root) Item_int(
+            NAME_STRING("Not_used"), (longlong)1, MY_INT64_NUM_DECIMAL_DIGITS);
+        if (constant == nullptr) return true;
+        it_fields_list.replace(constant);
+        it_all_fields.replace(constant);
+        subs_select->base_ref_items[i] = constant;
+        inner = constant;
+      }
+      uint name_len =
+          snprintf(buff, sizeof(buff), SYNTHETIC_FIELD_NAME "%d", i + 1);
+      inner->orig_name = inner->item_name;
+      inner->item_name.copy(buff, name_len);
+    }
+  }
 
   if (check_duplicate_names(m_derived_column_names, derived->types, false))
     return true;
@@ -474,6 +511,10 @@ static void swap_column_names_of_unit_and_tmp_table(
 
 /**
   Prepare a derived table or view for materialization.
+  The derived table must have been
+  - resolved by resolve_derived(),
+  - or resolved as a subquery (by Item_*_subselect_::fix_fields()) then
+  converted to a derived table.
 
   @param  thd   THD pointer
 
@@ -496,7 +537,7 @@ bool TABLE_LIST::setup_materialized_derived_tmp_table(THD *thd)
 {
   DBUG_TRACE;
 
-  DBUG_ASSERT(is_view_or_derived() && !is_merged() && table == NULL);
+  DBUG_ASSERT(is_view_or_derived() && !is_merged() && table == nullptr);
 
   DBUG_PRINT("info", ("algorithm: TEMPORARY TABLE"));
 
@@ -519,7 +560,7 @@ bool TABLE_LIST::setup_materialized_derived_tmp_table(THD *thd)
     derived_result->table = table;
   }
 
-  if (table == NULL) {
+  if (table == nullptr) {
     // Create the result table for the materialization
     ulonglong create_options =
         derived->first_select()->active_options() | TMP_TABLE_ALL_COLUMNS;
@@ -747,7 +788,7 @@ bool TABLE_LIST::create_materialized_table(THD *thd) {
     2) Table is a constant one with all NULL values.
   */
   if (table->is_created() ||                          // 1
-      (select_lex->join != NULL &&                    // 2
+      (select_lex->join != nullptr &&                 // 2
        (select_lex->join->const_table_map & map())))  // 2
   {
     /*
@@ -755,9 +796,9 @@ bool TABLE_LIST::create_materialized_table(THD *thd) {
       they would have been materialized already.
     */
 #ifndef DBUG_OFF
-    if (table != NULL) {
+    if (table != nullptr) {
       QEP_TAB *tab = table->reginfo.qep_tab;
-      DBUG_ASSERT(tab == NULL || tab->type() != JT_CONST ||
+      DBUG_ASSERT(tab == nullptr || tab->type() != JT_CONST ||
                   table->has_null_row());
     }
 #endif
@@ -795,6 +836,7 @@ bool TABLE_LIST::materialize_derived(THD *thd) {
   while (TABLE *t = it.get_next())
     if (t->materialized) {
       table->materialized = true;
+      table->set_not_started();
       return false;
     }
 
@@ -832,6 +874,11 @@ bool TABLE_LIST::materialize_derived(THD *thd) {
   }
 
   table->materialized = true;
+
+  // Mark the table as not started (default is just zero status),
+  // or read_system() and read_const() will forget to read the row.
+  table->set_not_started();
+
   return res;
 }
 

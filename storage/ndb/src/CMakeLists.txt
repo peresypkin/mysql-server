@@ -1,4 +1,4 @@
-# Copyright (c) 2008, 2019, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2008, 2020, Oracle and/or its affiliates. All rights reserved.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License, version 2.0,
@@ -153,6 +153,11 @@ ADD_LIBRARY(ndbclient_so SHARED ndbclient_exports.cpp)
 SET_TARGET_PROPERTIES(ndbclient_so PROPERTIES
   LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/library_output_directory)
 
+# This is needed for java-based unit tests.
+IF(MY_COMPILER_IS_CLANG AND WITH_UBSAN)
+  TARGET_LINK_LIBRARIES(ndbclient_so -lubsan)
+ENDIF()
+
 ADD_INSTALL_RPATH_FOR_OPENSSL(ndbclient_so)
 
 IF(WIN32_CLANG AND WITH_ASAN)
@@ -277,10 +282,12 @@ ENDIF()
 
 SET_TARGET_PROPERTIES(ndbclient_so PROPERTIES
   OUTPUT_NAME "ndbclient"
-  SOVERSION ${NDB_SHARED_LIB_VERSION})
-MYSQL_INSTALL_TARGETS(ndbclient_so
+  SOVERSION ${NDB_SHARED_LIB_VERSION}
+  )
+MYSQL_INSTALL_TARGET(ndbclient_so
   DESTINATION "${INSTALL_LIBDIR}"
-  COMPONENT Development)
+  COMPONENT Development
+  )
 # Build test program to check linking against ndclient_so
 ADD_EXECUTABLE(ndbclient_shared_link_test ndbclient_link_test.cpp)
 SET_TARGET_PROPERTIES(ndbclient_shared_link_test PROPERTIES ENABLE_EXPORTS TRUE)

@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2018, 2019, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2018, 2020, Oracle and/or its affiliates. All rights reserved.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -47,16 +47,17 @@
 #else
 #include <windows.h>
 #include <winsock2.h>
-typedef long ssize_t;
 #endif
 
+#include "my_inttypes.h"  // ssize_t
+#include "mysql/harness/net_ts/impl/socket_error.h"
 #include "mysql_protocol_decoder.h"
 #include "mysql_protocol_encoder.h"
 #include "mysql_protocol_utils.h"
 #include "socket_operations.h"
 
 std::error_code get_last_socket_error_code() {
-  return mysql_harness::SocketOperations::instance()->get_error_code();
+  return net::impl::socket::last_error_code();
 }
 
 void send_packet(socket_t client_socket, const uint8_t *data, size_t size,

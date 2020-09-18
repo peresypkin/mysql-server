@@ -1,4 +1,4 @@
-# Copyright (c) 2015, 2019, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2015, 2020, Oracle and/or its affiliates.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License, version 2.0,
@@ -66,6 +66,8 @@ SET(XPL_TEST_SRC
   xpl/stubs/plugin.cc
   xpl/stubs/security_context_service.cc
   xpl/stubs/sql_session_service.cc
+  xpl/mock/mock_component_services.cc
+  xpl/mock/mock_srv_session_services.cc
 
   xpl/mysqlx_pb_wrapper.cc
 
@@ -91,10 +93,10 @@ SET(XPL_TEST_SRC
   xpl/index_field_t.cc
   xpl/insert_statement_builder_t.cc
   xpl/json_utils_t.cc
-  xpl/json_generator_t.cc
   xpl/listener_tcp_t.cc
   xpl/listener_unix_socket_t.cc
   xpl/message_builder_t.cc
+  xpl/meta_schema_validator_t.cc
   xpl/prepared_statement_builder_t.cc
   xpl/prepare_param_handler_t.cc
   xpl/protocol_decoder_t.cc
@@ -107,6 +109,7 @@ SET(XPL_TEST_SRC
   xpl/server_client_timeout_t.cc
   xpl/set_variable_adaptor_t.cc
   xpl/sha256_cache_t.cc
+  xpl/sql_data_context_t.cc
   xpl/socket_acceptor_task_t.cc
   xpl/sql_statement_builder_t.cc
   xpl/sync_variable_t.cc
@@ -120,7 +123,20 @@ SET(XPL_TEST_SRC
   xpl/xrow_buffer_t.cc
   xpl/xpl_regex_t.cc
 )
-
+# This compiler fails to handle some of the mock functions involved.
+IF(MY_COMPILER_IS_SUNPRO)
+  LIST(REMOVE_ITEM XPL_TEST_SRC
+    xpl/account_verification_handler_t.cc
+    xpl/admin_cmd_index_t.cc
+    xpl/index_field_t.cc
+    xpl/listener_tcp_t.cc
+    xpl/listener_unix_socket_t.cc
+    xpl/protocol_decoder_t.cc
+    xpl/sql_data_context_t.cc
+    xpl/socket_acceptor_task_t.cc
+    xpl/timeouts_t.cc
+    )
+ENDIF()
 
 IF(MYSQLX_ADDITIONAL_TESTS_ENABLE)
   INCLUDE(mysql_function_names.cmake)
@@ -159,7 +175,7 @@ ENDIF()
 
 # assertion failed in function assert_with_dumps() @ ssa.c:621 when using -xO3
 # Segfault in the unit test, so lower optimization level there as well
-IF(CMAKE_CXX_COMPILER_ID MATCHES "SunPro")
+IF(MY_COMPILER_IS_SUNPRO)
   ADD_COMPILE_FLAGS(
     ${CMAKE_CURRENT_SOURCE_DIR}/xpl/callback_command_delegate_t.cc
     COMPILE_FLAGS "-xO2")
@@ -204,10 +220,23 @@ SET(XCL_SRC
   xcl/session_execute_t.cc
   xcl/session_general_t.cc
   xcl/session_options_t.cc
+  xcl/session_negotiation_t.cc
   xcl/sha256_scramble_t.cc
   xcl/ssl_config_t.cc
   xcl/xpriority_list_t.cc
 )
+# This compiler fails to handle some of the mock functions involved.
+IF(MY_COMPILER_IS_SUNPRO)
+  LIST(REMOVE_ITEM XCL_SRC
+    xcl/auth_chaining_t.cc
+    xcl/session_capability_t.cc
+    xcl/session_connect_t.cc
+    xcl/session_execute_t.cc
+    xcl/session_general_t.cc
+    xcl/session_options_t.cc
+    xcl/session_negotiation_t.cc
+    )
+ENDIF()
 
 ADD_COMPILE_DEFINITIONS(${XCL_SRC}
   COMPILE_DEFINITIONS USE_MYSQLX_FULL_PROTO

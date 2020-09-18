@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2015, 2020, Oracle and/or its affiliates. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License, version 2.0,
@@ -21,6 +21,8 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA
  */
+
+#include <string>
 
 #include "plugin/x/src/crud_cmd_handler.h"
 
@@ -47,8 +49,7 @@ namespace xpl {
 template <typename B, typename M>
 ngs::Error_code Crud_command_handler::execute(
     const B &builder, const M &msg, iface::Resultset &resultset,
-    Status_variable variable,
-    bool (iface::Protocol_encoder::*send_ok)()) {
+    Status_variable variable, bool (iface::Protocol_encoder::*send_ok)()) {
   m_session->update_status(variable);
   m_qb.clear();
   try {
@@ -68,9 +69,9 @@ ngs::Error_code Crud_command_handler::execute(
 }
 
 template <typename B, typename M>
-void Crud_command_handler::notice_handling(
-    const iface::Resultset::Info &info, const B & /*builder*/,
-    const M & /*msg*/) const {
+void Crud_command_handler::notice_handling(const iface::Resultset::Info &info,
+                                           const B & /*builder*/,
+                                           const M & /*msg*/) const {
   notice_handling_common(info);
 }
 
@@ -100,8 +101,9 @@ ngs::Error_code Crud_command_handler::execute_crud_insert(
   ngs::Error_code error = id_agg.configue(&m_session->data_context());
   if (error) return error;
 
+  const auto is_relational = is_table_data_model(msg);
   Expression_generator gen(&m_qb, msg.args(), msg.collection().schema(),
-                           is_table_data_model(msg));
+                           is_relational);
   Empty_resultset rset;
   return execute(Insert_statement_builder(gen, &id_agg), msg, rset,
                  &ngs::Common_status_variables::m_crud_insert,
@@ -124,15 +126,12 @@ ngs::Error_code Crud_command_handler::error_handling(
                         msg.collection().name().c_str());
 
     case ER_DUP_ENTRY:
+    case ER_X_BAD_UPSERT_DATA:
       return ngs::Error(
-          ER_X_DOC_ID_DUPLICATE,
+          ER_X_DUPLICATE_ENTRY,
           "Document contains a field value that is not unique but "
           "required to be");
 
-    case ER_X_BAD_UPSERT_DATA:
-      return ngs::Error(ER_X_BAD_UPSERT_DATA,
-                        "Unable upsert data in document collection '%s'",
-                        msg.collection().name().c_str());
     case ER_CHECK_CONSTRAINT_VIOLATED:
       return get_detailed_validation_error(m_session->data_context());
   }
@@ -141,8 +140,7 @@ ngs::Error_code Crud_command_handler::error_handling(
 
 template <>
 void Crud_command_handler::notice_handling(
-    const iface::Resultset::Info &info,
-    const Insert_statement_builder &builder,
+    const iface::Resultset::Info &info, const Insert_statement_builder &builder,
     const Mysqlx::Crud::Insert &msg) const {
   notice_handling_common(info);
   m_session->proto().send_notice_rows_affected(info.affected_rows);
@@ -158,8 +156,9 @@ void Crud_command_handler::notice_handling(
 // -- Update
 ngs::Error_code Crud_command_handler::execute_crud_update(
     const Mysqlx::Crud::Update &msg) {
+  const auto is_relational = is_table_data_model(msg);
   Expression_generator gen(&m_qb, msg.args(), msg.collection().schema(),
-                           is_table_data_model(msg));
+                           is_relational);
   Empty_resultset rset;
   return execute(Update_statement_builder(gen), msg, rset,
                  &ngs::Common_status_variables::m_crud_update,
@@ -199,8 +198,9 @@ void Crud_command_handler::notice_handling(
 // -- Delete
 ngs::Error_code Crud_command_handler::execute_crud_delete(
     const Mysqlx::Crud::Delete &msg) {
+  const auto is_relational = is_table_data_model(msg);
   Expression_generator gen(&m_qb, msg.args(), msg.collection().schema(),
-                           is_table_data_model(msg));
+                           is_relational);
   Empty_resultset rset;
   return execute(Delete_statement_builder(gen), msg, rset,
                  &ngs::Common_status_variables::m_crud_delete,
@@ -219,8 +219,9 @@ void Crud_command_handler::notice_handling(
 // -- Find
 ngs::Error_code Crud_command_handler::execute_crud_find(
     const Mysqlx::Crud::Find &msg) {
+  const auto is_relational = is_table_data_model(msg);
   Expression_generator gen(&m_qb, msg.args(), msg.collection().schema(),
-                           is_table_data_model(msg));
+                           is_relational);
   Streaming_resultset<Crud_command_delegate> rset(m_session, false);
   return execute(Find_statement_builder(gen), msg, rset,
                  &ngs::Common_status_variables::m_crud_find, nullptr);

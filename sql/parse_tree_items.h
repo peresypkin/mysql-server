@@ -1,4 +1,4 @@
-/* Copyright (c) 2013, 2019, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2013, 2020, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -43,20 +43,6 @@
 class PT_subquery;
 class PT_window;
 struct udf_func;
-
-class PTI_table_wild : public Parse_tree_item {
-  typedef Parse_tree_item super;
-
-  const char *schema;
-  const char *table;
-
- public:
-  explicit PTI_table_wild(const POS &pos, const char *schema_arg,
-                          const char *table_arg)
-      : super(pos), schema(schema_arg), table(table_arg) {}
-
-  bool itemize(Parse_context *pc, Item **item) override;
-};
 
 class PTI_truth_transform : public Parse_tree_item {
   typedef Parse_tree_item super;
@@ -152,7 +138,7 @@ class PTI_simple_ident_q_2d : public PTI_simple_ident_q_3d {
  public:
   PTI_simple_ident_q_2d(const POS &pos, const char *table_arg,
                         const char *field_arg)
-      : super(pos, NULL, table_arg, field_arg) {}
+      : super(pos, nullptr, table_arg, field_arg) {}
 
   bool itemize(Parse_context *pc, Item **res) override;
 };
@@ -355,7 +341,7 @@ class PTI_literal_underscore_charset_hex_num : public Item_string {
 
     set_repertoire_from_value();
     set_cs_specified(true);
-    return check_well_formed_result(&str_value, true, true) == NULL;
+    return check_well_formed_result(&str_value, true, true) == nullptr;
   }
 };
 
@@ -374,7 +360,7 @@ class PTI_literal_underscore_charset_bin_num : public Item_string {
     if (super::itemize(pc, res)) return true;
 
     set_cs_specified(true);
-    return check_well_formed_result(&str_value, true, true) == NULL;
+    return check_well_formed_result(&str_value, true, true) == nullptr;
   }
 };
 
@@ -428,7 +414,8 @@ class PTI_count_sym : public Item_sum_count {
   typedef Item_sum_count super;
 
  public:
-  PTI_count_sym(const POS &pos, PT_window *w) : super(pos, (Item *)NULL, w) {}
+  PTI_count_sym(const POS &pos, PT_window *w)
+      : super(pos, (Item *)nullptr, w) {}
 
   bool itemize(Parse_context *pc, Item **res) override;
 };

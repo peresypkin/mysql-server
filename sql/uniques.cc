@@ -1,4 +1,4 @@
-/* Copyright (c) 2001, 2019, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2001, 2020, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -137,7 +137,7 @@ static uint uniq_read_to_buffer(IO_CACHE *fromfile, Merge_chunk *merge_chunk,
 /**
   Merge buffers to one buffer.
 
-  @param thd
+  @param thd            thread context
   @param param          Sort parameter
   @param from_file      File with source data (Merge_chunks point to this file)
   @param to_file        File to write the sorted result data.
@@ -147,10 +147,8 @@ static uint uniq_read_to_buffer(IO_CACHE *fromfile, Merge_chunk *merge_chunk,
   @param chunk_array    Array of chunks to merge.
   @param flag           0 - write full record, 1 - write addon/ref
 
-  @returns
-    0      OK
-  @returns
-    other  error
+  @retval 0      OK
+  @retval other  error
 */
 static int merge_buffers(THD *thd, Uniq_param *param, IO_CACHE *from_file,
                          IO_CACHE *to_file, Sort_buffer sort_buffer,
@@ -193,8 +191,8 @@ static int merge_buffers(THD *thd, Uniq_param *param, IO_CACHE *from_file,
   Priority_queue<Merge_chunk *,
                  std::vector<Merge_chunk *, Malloc_allocator<Merge_chunk *>>,
                  decltype(greater)>
-  queue(greater,
-        Malloc_allocator<Merge_chunk *>(key_memory_Filesort_info_merge));
+      queue(greater,
+            Malloc_allocator<Merge_chunk *>(key_memory_Filesort_info_merge));
 
   if (queue.reserve(chunk_array.size())) return 1;
 
@@ -357,7 +355,7 @@ Unique::Unique(qsort2_cmp comp_func, void *comp_func_fixed_arg, uint size_arg,
     : file_ptrs(PSI_INSTRUMENT_ME),
       max_elements(0),
       max_in_memory_size(max_in_memory_size_arg),
-      record_pointers(NULL),
+      record_pointers(nullptr),
       size(size_arg),
       elements(0) {
   my_b_clear(&file);
@@ -896,7 +894,7 @@ bool Unique::get(TABLE *table) {
 
   if (my_b_tell(&file) == 0) {
     /* Whole tree is in memory;  Don't use disk if you don't need to */
-    DBUG_ASSERT(table->unique_result.sorted_result == NULL);
+    DBUG_ASSERT(table->unique_result.sorted_result == nullptr);
     table->unique_result.sorted_result.reset(
         (uchar *)my_malloc(key_memory_Filesort_info_record_pointers,
                            size * tree.elements_in_tree, MYF(0)));
@@ -916,7 +914,7 @@ bool Unique::get(TABLE *table) {
   bool error = true;
 
   /* Open cached file if it isn't open */
-  DBUG_ASSERT(table->unique_result.io_cache == NULL);
+  DBUG_ASSERT(table->unique_result.io_cache == nullptr);
   outfile = table->unique_result.io_cache = (IO_CACHE *)my_malloc(
       key_memory_TABLE_sort_io_cache, sizeof(IO_CACHE), MYF(MY_ZEROFILL));
 

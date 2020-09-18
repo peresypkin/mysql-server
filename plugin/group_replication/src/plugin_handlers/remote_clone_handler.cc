@@ -1,4 +1,4 @@
-/* Copyright (c) 2019, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2019, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -24,6 +24,7 @@
 #include "plugin/group_replication/include/leave_group_on_failure.h"
 #include "plugin/group_replication/include/plugin.h"
 #include "plugin/group_replication/include/plugin_handlers/remote_clone_handler.h"
+#include "plugin/group_replication/include/plugin_variables/recovery_endpoints.h"
 
 [[noreturn]] void *Remote_clone_handler::launch_thread(void *arg) {
   Remote_clone_handler *thd = static_cast<Remote_clone_handler *>(arg);
@@ -160,12 +161,12 @@ int Remote_clone_handler::extract_donor_info(
   std::vector<Group_member_info *> *all_members_info =
       group_member_mgr->get_all_members();
 
-  Sid_map local_sid_map(NULL);
-  Sid_map group_sid_map(NULL);
-  Gtid_set local_member_set(&local_sid_map, NULL);
-  Gtid_set group_set(&group_sid_map, NULL);
-  Sid_map purged_sid_map(NULL);
-  Gtid_set purged_set(&purged_sid_map, NULL);
+  Sid_map local_sid_map(nullptr);
+  Sid_map group_sid_map(nullptr);
+  Gtid_set local_member_set(&local_sid_map, nullptr);
+  Gtid_set group_set(&group_sid_map, nullptr);
+  Sid_map purged_sid_map(nullptr);
+  Gtid_set purged_set(&purged_sid_map, nullptr);
 
   if (local_member_set.add_gtid_text(
           local_member_info->get_gtid_executed().c_str()) != RETURN_STATUS_OK ||
@@ -486,6 +487,20 @@ int Remote_clone_handler::run_clone_query(
     std::string &port, std::string &username, std::string &password,
     bool use_ssl) {
   int error = 0;
+
+#ifndef DBUG_OFF
+  DBUG_EXECUTE_IF("gr_run_clone_query_fail_once", {
+    const char act[] =
+        "now signal signal.run_clone_query_waiting wait_for "
+        "signal.run_clone_query_continue";
+    DBUG_ASSERT(!debug_sync_set_action(current_thd, STRING_WITH_LEN(act)));
+
+    DBUG_SET("-d,gr_run_clone_query_fail_once");
+
+    return 1;
+  });
+#endif /* DBUG_OFF */
+
   mysql_mutex_lock(&m_clone_query_lock);
   m_clone_query_session_id =
       sql_command_interface->get_sql_service_interface()->get_session_id();
@@ -625,6 +640,14 @@ int Remote_clone_handler::clone_server(const std::string &group_name,
 end:
   mysql_mutex_unlock(&m_run_lock);
   DBUG_RETURN(ret);
+}
+
+bool Remote_clone_handler::evaluate_error_code(int) {
+  // If the server dropped its data, async recovery will fail
+  if (is_server_data_dropped()) {
+    return true;
+  }
+  return false;
 }
 
 #ifndef DBUG_OFF
@@ -774,13 +797,15 @@ void Remote_clone_handler::gr_clone_debug_point() {
 
     std::string hostname("");
     std::string port("");
+    std::vector<std::pair<std::string, uint>> endpoints;
 
     mysql_mutex_lock(&m_donor_list_lock);
     empty_donor_list = m_suitable_donors.empty();
     if (!empty_donor_list) {
       Group_member_info *member = m_suitable_donors.front();
-      hostname.assign(member->get_hostname());
-      port.assign(std::to_string(member->get_port()));
+      Donor_recovery_endpoints donor_endpoints;
+      endpoints = donor_endpoints.get_endpoints(member);
+
       // define the current donor
       delete m_current_donor_address;
       m_current_donor_address =
@@ -793,45 +818,56 @@ void Remote_clone_handler::gr_clone_debug_point() {
     }
     mysql_mutex_unlock(&m_donor_list_lock);
 
-    // No valid donor remains in the list
-    if (hostname.empty()) continue;
-
-    /* Update the allowed donor list */
-    if ((error = update_donor_list(sql_command_interface, hostname, port))) {
-      break; /* purecov: inspected */
+    // No valid donor in the list
+    if (endpoints.size() == 0) {
+      error = 1;
+      continue;
     }
 
-    if (m_being_terminated) goto thd_end;
+    for (auto endpoint : endpoints) {
+      hostname.assign(endpoint.first);
+      port.assign(std::to_string(endpoint.second));
 
-    terminate_wait_on_start_process(true);
-
-    error = run_clone_query(sql_command_interface, hostname, port, username,
-                            password, use_ssl);
-
-    switch (error) {
-      case ER_RESTART_SERVER_FAILED:
-        critical_error = true;
-        goto thd_end;
-    }
-
-    if (error && !m_being_terminated) {
-      if (evaluate_server_connection(sql_command_interface)) {
-        /* purecov: begin inspected */
-        // This is a bad sign, might as well quit
-        critical_error = true;
-        goto thd_end;
-        /* purecov: end */
+      /* Update the allowed donor list */
+      if ((error = update_donor_list(sql_command_interface, hostname, port))) {
+        continue; /* purecov: inspected */
       }
 
-      /*
-       If we reach this point and we are now alone it means no alternatives
-       remain for recovery. A fallback to distributed recovery would be
-       interpreted as a solo member recovery.
-      */
-      if (group_member_mgr->get_number_of_members() == 1) {
-        critical_error = true;
-        goto thd_end;
+      if (m_being_terminated) goto thd_end;
+
+      terminate_wait_on_start_process(true);
+
+      error = run_clone_query(sql_command_interface, hostname, port, username,
+                              password, use_ssl);
+
+      // Even on critical errors we continue as another clone can fix the issue
+      if (!critical_error) critical_error = evaluate_error_code(error);
+
+      // On ER_RESTART_SERVER_FAILED it makes no sense to retry
+      if (error == ER_RESTART_SERVER_FAILED) goto thd_end;
+
+      if (error && !m_being_terminated) {
+        if (evaluate_server_connection(sql_command_interface)) {
+          /* purecov: begin inspected */
+          // This is a bad sign, might as well quit
+          critical_error = true;
+          goto thd_end;
+          /* purecov: end */
+        }
+
+        /*
+          If we reach this point and we are now alone it means no alternatives
+          remain for recovery. A fallback to distributed recovery would be
+          interpreted as a solo member recovery.
+          */
+        if (group_member_mgr->get_number_of_members() == 1) {
+          critical_error = true;
+          goto thd_end;
+        }
       }
+
+      // try till there is a recovery endpoint that succeeds
+      if (!error) break;
     }
 
     // try till there is a clone command that succeeds

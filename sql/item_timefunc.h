@@ -1,7 +1,7 @@
 #ifndef ITEM_TIMEFUNC_INCLUDED
 #define ITEM_TIMEFUNC_INCLUDED
 
-/* Copyright (c) 2000, 2019, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2000, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -165,7 +165,7 @@ class Item_func_month final : public Item_func {
   }
   String *val_str(String *str) override {
     longlong nr = val_int();
-    if (null_value) return 0;
+    if (null_value) return nullptr;
     str->set(nr, collation.collation);
     return str;
   }
@@ -193,6 +193,7 @@ class Item_func_monthname final : public Item_str_func {
  public:
   Item_func_monthname(const POS &pos, Item *a) : Item_str_func(pos, a) {}
   const char *func_name() const override { return "monthname"; }
+  enum Functype functype() const override { return MONTHNAME_FUNC; }
   String *val_str(String *str) override;
   bool resolve_type(THD *thd) override;
   bool check_partition_func_processor(uchar *) override { return true; }
@@ -206,6 +207,7 @@ class Item_func_dayofyear final : public Item_int_func {
   Item_func_dayofyear(const POS &pos, Item *a) : Item_int_func(pos, a) {}
   longlong val_int() override;
   const char *func_name() const override { return "dayofyear"; }
+  enum Functype functype() const override { return DAYOFYEAR_FUNC; }
   bool resolve_type(THD *) override {
     fix_char_length(3);
     maybe_null = true;
@@ -256,6 +258,7 @@ class Item_func_quarter final : public Item_int_func {
   Item_func_quarter(const POS &pos, Item *a) : Item_int_func(pos, a) {}
   longlong val_int() override;
   const char *func_name() const override { return "quarter"; }
+  enum Functype functype() const override { return QUARTER_FUNC; }
   bool resolve_type(THD *) override {
     fix_char_length(1); /* 1..4 */
     maybe_null = true;
@@ -359,7 +362,7 @@ class Item_func_weekday : public Item_func {
   String *val_str(String *str) override {
     DBUG_ASSERT(fixed == 1);
     str->set(val_int(), &my_charset_bin);
-    return null_value ? 0 : str;
+    return null_value ? nullptr : str;
   }
   bool get_date(MYSQL_TIME *ltime, my_time_flags_t fuzzydate) override {
     return get_date_from_int(ltime, fuzzydate);
@@ -393,6 +396,7 @@ class Item_func_dayname final : public Item_func_weekday {
   Item_func_dayname(const POS &pos, Item *a)
       : Item_func_weekday(pos, a, false) {}
   const char *func_name() const override { return "dayname"; }
+  enum Functype functype() const override { return DAYNAME_FUNC; }
   String *val_str(String *str) override;
   bool get_date(MYSQL_TIME *ltime, my_time_flags_t fuzzydate) override {
     return get_date_from_string(ltime, fuzzydate);
@@ -922,7 +926,7 @@ class Item_time_literal final : public Item_time_func {
     @param dec_arg  number of fractional digits in ltime.
   */
   Item_time_literal(MYSQL_TIME *ltime, uint dec_arg) {
-    set_data_type_time(MY_MIN(dec_arg, DATETIME_MAX_DECIMALS));
+    set_data_type_time(std::min(dec_arg, uint(DATETIME_MAX_DECIMALS)));
     cached_time.set_time(ltime, decimals);
     fixed = true;
   }
@@ -968,7 +972,7 @@ class Item_datetime_literal final : public Item_datetime_func {
                    time zone upon storage.
   */
   Item_datetime_literal(MYSQL_TIME *ltime, uint dec_arg, const Time_zone *tz) {
-    set_data_type_datetime(MY_MIN(dec_arg, DATETIME_MAX_DECIMALS));
+    set_data_type_datetime(std::min(dec_arg, uint{DATETIME_MAX_DECIMALS}));
     cached_time.set_datetime(ltime, decimals, tz);
     fixed = true;
   }
@@ -1299,7 +1303,8 @@ class Item_func_sec_to_time final : public Item_time_func {
   Item_func_sec_to_time(const POS &pos, Item *item)
       : Item_time_func(pos, item) {}
   bool resolve_type(THD *) override {
-    set_data_type_time(MY_MIN(args[0]->decimals, DATETIME_MAX_DECIMALS));
+    set_data_type_time(
+        std::min(args[0]->decimals, uint8{DATETIME_MAX_DECIMALS}));
     maybe_null = true;
     return false;
   }
@@ -1394,8 +1399,13 @@ class Item_extract final : public Item_int_func {
 };
 
 class Item_typecast_date final : public Item_date_func {
+  bool m_explicit_cast{true};
+
  public:
-  Item_typecast_date(Item *a) : Item_date_func(a) { maybe_null = true; }
+  Item_typecast_date(Item *a, bool explicit_cast)
+      : Item_date_func(a), m_explicit_cast(explicit_cast) {
+    maybe_null = true;
+  }
   Item_typecast_date(const POS &pos, Item *a) : Item_date_func(pos, a) {
     maybe_null = true;
   }
@@ -1410,6 +1420,7 @@ class Item_typecast_date final : public Item_date_func {
 
 class Item_typecast_time final : public Item_time_func {
   bool detect_precision_from_arg;
+  bool m_explicit_cast{true};
 
  public:
   Item_typecast_time(Item *a) : Item_time_func(a) {
@@ -1440,9 +1451,11 @@ class Item_typecast_time final : public Item_time_func {
 
 class Item_typecast_datetime final : public Item_datetime_func {
   bool detect_precision_from_arg;
+  bool m_explicit_cast{true};
 
  public:
-  Item_typecast_datetime(Item *a) : Item_datetime_func(a) {
+  Item_typecast_datetime(Item *a, bool explicit_cast)
+      : Item_datetime_func(a), m_explicit_cast(explicit_cast) {
     detect_precision_from_arg = true;
   }
   Item_typecast_datetime(const POS &pos, Item *a) : Item_datetime_func(pos, a) {
@@ -1510,7 +1523,7 @@ class Item_func_timediff final : public Item_time_func {
   const char *func_name() const override { return "timediff"; }
   bool resolve_type(THD *) override {
     set_data_type_time(
-        MY_MAX(args[0]->time_precision(), args[1]->time_precision()));
+        std::max(args[0]->time_precision(), args[1]->time_precision()));
     maybe_null = true;
     return false;
   }
@@ -1524,7 +1537,8 @@ class Item_func_maketime final : public Item_time_func {
     maybe_null = true;
   }
   bool resolve_type(THD *) override {
-    set_data_type_time(MY_MIN(args[2]->decimals, DATETIME_MAX_DECIMALS));
+    set_data_type_time(
+        std::min(args[2]->decimals, uint8{DATETIME_MAX_DECIMALS}));
     return false;
   }
   const char *func_name() const override { return "maketime"; }

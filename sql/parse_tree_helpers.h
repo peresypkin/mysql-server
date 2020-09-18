@@ -1,4 +1,4 @@
-/* Copyright (c) 2013, 2019, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2013, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -46,6 +46,9 @@ class my_decimal;
 struct MEM_ROOT;
 struct handlerton;
 
+struct Parse_context;
+struct Column_parse_context;
+
 /**
   Base class for parse-time Item objects
 
@@ -73,11 +76,11 @@ class Parse_tree_item : public Item {
   }
   String *val_str(String *) override {
     DBUG_ASSERT(0);
-    return NULL;
+    return nullptr;
   }
   my_decimal *val_decimal(my_decimal *) override {
     DBUG_ASSERT(0);
-    return NULL;
+    return nullptr;
   }
   bool get_date(MYSQL_TIME *, uint) override {
     DBUG_ASSERT(0);
@@ -118,7 +121,7 @@ class PT_item_list : public Parse_tree_node {
      Item may be NULL in case of OOM: just ignore it and check thd->is_error()
      in the caller code.
     */
-    return item == NULL || value.push_back(item);
+    return item == nullptr || value.push_back(item);
   }
 
   bool push_front(Item *item) {
@@ -126,7 +129,7 @@ class PT_item_list : public Parse_tree_node {
      Item may be NULL in case of OOM: just ignore it and check thd->is_error()
      in the caller code.
     */
-    return item == NULL || value.push_front(item);
+    return item == nullptr || value.push_front(item);
   }
 
   Item *pop_front() {
@@ -171,7 +174,7 @@ To *item_cond_cast(Item *const from) {
   return ((from->type() == Item::COND_ITEM &&
            static_cast<Item_func *>(from)->functype() == Tag)
               ? static_cast<To *>(from)
-              : NULL);
+              : nullptr);
 }
 
 /**
@@ -194,7 +197,7 @@ To *item_cond_cast(Item *const from) {
 template <class Class, Item_func::Functype Tag>
 Item *flatten_associative_operator(MEM_ROOT *mem_root, const POS &pos,
                                    Item *left, Item *right) {
-  if (left == NULL || right == NULL) return NULL;
+  if (left == nullptr || right == nullptr) return nullptr;
   Class *left_func = item_cond_cast<Class, Tag>(left);
   Class *right_func = item_cond_cast<Class, Tag>(right);
   if (left_func) {
@@ -251,4 +254,6 @@ bool validate_resource_group_priority(THD *thd, int *priority,
 bool check_resource_group_support();
 bool check_resource_group_name_len(const LEX_CSTRING &name,
                                    Sql_condition::enum_severity_level severity);
+
+void move_cf_appliers(Parse_context *tddlpc, Column_parse_context *cpc);
 #endif /* PARSE_TREE_HELPERS_INCLUDED */

@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2003, 2019, Oracle and/or its affiliates. All rights reserved.
+   Copyright (c) 2003, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -1512,7 +1512,6 @@ void
 Suma::execNODE_FAILREP(Signal* signal){
   jamEntry();
   DBUG_ENTER("Suma::execNODE_FAILREP");
-
   NodeFailRep * rep = (NodeFailRep*)signal->getDataPtr();
 
   if(signal->getNoOfSections() >= 1)
@@ -1593,9 +1592,13 @@ Suma::execNODE_FAILREP(Signal* signal){
         else if (state & Bucket::BUCKET_SHUTDOWN_TO)
         {
           jam();
+          // I am taking over from a shutdown node, but another node from
+          // the same nodegroup failed before takeover could complete
           c_buckets[i].m_state &= ~Uint32(Bucket::BUCKET_SHUTDOWN_TO);
           m_switchover_buckets.clear(i);
-          ndbrequire(get_responsible_node(i, tmp) == getOwnNodeId());
+          int rsp_node = get_responsible_node(i, tmp);
+          ndbrequire(rsp_node == getOwnNodeId() ||
+                     rsp_node == c_buckets[i].m_switchover_node);
           start_resend(signal, i);
         }
       }
@@ -5126,8 +5129,8 @@ Suma::doFIRE_TRIG_ORD(Signal* signal, LinearSectionPtr lsptr[3])
   {
     jam();
     constexpr uint buffer_header_sz = 6;
-    Uint32* dst1;
-    Uint32* dst2;
+    Uint32* dst1 = nullptr;
+    Uint32* dst2 = nullptr;
     Uint32 sz1 = f_trigBufferSize + buffer_header_sz;
     Uint32 sz2 = b_trigBufferSize;
     Page_pos save_pos= c_buckets[bucket].m_buffer_head;
@@ -5156,7 +5159,6 @@ Suma::doFIRE_TRIG_ORD(Signal* signal, LinearSectionPtr lsptr[3])
     {
       jam();
       // Revert first buffer allocation
-      Page_pos curr_pos= c_buckets[bucket].m_buffer_head;
       Uint32 first_page_id = save_pos.m_page_id;
 
       Uint32 page_id;
@@ -6759,6 +6761,18 @@ Suma::execSUMA_HANDOVER_REQ(Signal* signal)
         c_buckets[i].m_state |= Bucket::BUCKET_SHUTDOWN_TO;
         c_buckets[i].m_switchover_node = nodeId;
         ndbout_c("prepare to takeover bucket: %d", i);
+        if (ERROR_INSERTED(13056))
+        {
+          CLEAR_ERROR_INSERT_VALUE;
+          signal->theData[0] = 9999;
+          NdbNodeBitmask resp_nodes_minus_self;
+          resp_nodes_minus_self.assign(nodegroup);
+          resp_nodes_minus_self.clear(getOwnNodeId());
+          resp_nodes_minus_self.clear(nodeId);
+          int nf_node = get_responsible_node(i, resp_nodes_minus_self);
+          sendSignal(numberToRef(CMVMI, refToNode(nf_node)),
+                     GSN_NDB_TAMPER, signal, 1, JBA);
+        }
       }
     }
   }
@@ -7341,7 +7355,7 @@ Suma::resend_bucket(Signal* signal, Uint32 buck, Uint64 min_gci,
    */
   {
     Uint32 *src = nullptr;
-    Uint32 sz;
+    Uint32 sz = 0;
     Uint32 part = 0;
     while (ptr < end)
     {

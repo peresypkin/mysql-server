@@ -1,4 +1,4 @@
-/* Copyright (c) 2011, 2018, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2011, 2020, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -62,7 +62,7 @@ TEST_F(ItemTimeFuncTest, dateAddInterval) {
                                           INTERVAL_SECOND_MICROSECOND, false);
   Parse_context pc(thd(), thd()->lex->current_select());
   EXPECT_FALSE(item->itemize(&pc, &item));
-  EXPECT_FALSE(item->fix_fields(thd(), NULL));
+  EXPECT_FALSE(item->fix_fields(thd(), nullptr));
 
   // The below result is not correct, see Bug#16198372
   EXPECT_DOUBLE_EQ(20130122145222.234567, item->val_real());
@@ -105,7 +105,8 @@ const test_data test_values[] = {{"0.1234564", 0, 0, 0, 123456},
                                  {"3020399", 838, 59, 59, 0},
                                  {"99999999.99999999", 838, 59, 59, 0}};
 
-INSTANTIATE_TEST_CASE_P(a, ItemTimeFuncTestP, ::testing::ValuesIn(test_values));
+INSTANTIATE_TEST_SUITE_P(a, ItemTimeFuncTestP,
+                         ::testing::ValuesIn(test_values));
 
 /**
   Test member function of @c Item_time_func
@@ -164,7 +165,7 @@ TEST_P(ItemTimeFuncTestP, secToTime) {
   Item *item;
   EXPECT_FALSE(time->itemize(&pc, &item));
   EXPECT_EQ(time, item);
-  EXPECT_FALSE(time->fix_fields(thd(), NULL));
+  EXPECT_FALSE(time->fix_fields(thd(), nullptr));
 
   MYSQL_TIME ltime;
   time->get_time(&ltime);
@@ -212,8 +213,8 @@ const test_data test_values_trunc_frac[] = {
     {"3020399", 838, 59, 59, 0},
     {"99999999.99999999", 838, 59, 59, 0}};
 
-INSTANTIATE_TEST_CASE_P(a, ItemTimeFuncTruncFracTestP,
-                        ::testing::ValuesIn(test_values_trunc_frac));
+INSTANTIATE_TEST_SUITE_P(a, ItemTimeFuncTruncFracTestP,
+                         ::testing::ValuesIn(test_values_trunc_frac));
 
 TEST_P(ItemTimeFuncTruncFracTestP, secToTime) {
   Item_decimal *sec = new Item_decimal(POS(), m_t.secs, strlen(m_t.secs),
@@ -224,7 +225,7 @@ TEST_P(ItemTimeFuncTruncFracTestP, secToTime) {
   Item *item;
   EXPECT_FALSE(time->itemize(&pc, &item));
   EXPECT_EQ(time, item);
-  EXPECT_FALSE(time->fix_fields(thd(), NULL));
+  EXPECT_FALSE(time->fix_fields(thd(), nullptr));
 
   MYSQL_TIME ltime;
   time->get_time(&ltime);

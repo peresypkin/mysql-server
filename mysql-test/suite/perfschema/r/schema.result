@@ -8,6 +8,7 @@ use performance_schema;
 show tables;
 Tables_in_performance_schema
 accounts
+binary_log_transaction_compression_stats
 cond_instances
 data_lock_waits
 data_locks
@@ -105,6 +106,7 @@ table_io_waits_summary_by_index_usage
 table_io_waits_summary_by_table
 table_lock_waits_summary_by_table
 threads
+tls_channel_status
 user_defined_functions
 user_variables_by_thread
 users

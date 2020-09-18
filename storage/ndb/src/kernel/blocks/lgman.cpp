@@ -1,4 +1,4 @@
-/* Copyright (c) 2005, 2019, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2005, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -52,8 +52,8 @@ extern EventLogger * g_eventLogger;
 //#define DEBUG_LGMAN 1
 //#define DEBUG_DROP_LG 1
 //#define DEBUG_LGMAN_LCP 1
+//#define DEBUG_UNDO_SPACE 1
 #endif
-#define DEBUG_UNDO_SPACE 1
 
 #ifdef DEBUG_LGMAN
 #define DEB_LGMAN(arglist) do { g_eventLogger->info arglist ; } while (0)

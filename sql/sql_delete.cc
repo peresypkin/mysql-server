@@ -1,4 +1,4 @@
-/* Copyright (c) 2000, 2019, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2000, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -66,7 +66,8 @@
 #include "sql/sql_optimizer.h"  // optimize_cond, substitute_gc
 #include "sql/sql_resolver.h"   // setup_order
 #include "sql/sql_select.h"
-#include "sql/sql_view.h"  // check_key_in_view
+#include "sql/sql_update.h"  // switch_to_multi_table_if_subqueries
+#include "sql/sql_view.h"    // check_key_in_view
 #include "sql/system_variables.h"
 #include "sql/table.h"
 #include "sql/table_trigger_dispatcher.h"  // Table_trigger_dispatcher
@@ -101,7 +102,7 @@ bool Sql_cmd_delete::precheck(THD *thd) {
       have to juggle with LEX::query_tables_own_last value to be able
       call check_table_access() safely.
     */
-    lex->query_tables_own_last = 0;
+    lex->query_tables_own_last = nullptr;
     if (check_table_access(thd, DELETE_ACL, aux_tables, false, UINT_MAX,
                            false)) {
       lex->query_tables_own_last = save_query_tables_own_last;
@@ -177,21 +178,7 @@ bool Sql_cmd_delete::delete_from_single_table(THD *thd) {
   QEP_TAB_standalone qep_tab_st;
   QEP_TAB &qep_tab = qep_tab_st.as_QEP_TAB();
 
-  if (table->all_partitions_pruned_away) {
-    /*
-      All partitions were pruned away during preparation. Shortcut further
-      processing by "no rows". If explaining, report the plan and bail out.
-    */
-    no_rows = true;
-
-    if (lex->is_explain()) {
-      Modification_plan plan(thd, MT_DELETE, table,
-                             "No matching rows after partition pruning", true,
-                             0);
-      bool err = explain_single_table_modification(thd, thd, &plan, select_lex);
-      return err;
-    }
-  }
+  assert(!(table->all_partitions_pruned_away || m_empty_query));
 
   Item *conds = nullptr;
   if (!no_rows && select_lex->get_optimizable_conditions(thd, &conds, nullptr))
@@ -212,7 +199,7 @@ bool Sql_cmd_delete::delete_from_single_table(THD *thd) {
     deletes are optimized in JOIN::optimize().
   */
   if (conds || order)
-    static_cast<void>(substitute_gc(thd, select_lex, conds, NULL, order));
+    static_cast<void>(substitute_gc(thd, select_lex, conds, nullptr, order));
 
   const bool const_cond = conds == nullptr || conds->const_item();
   const bool const_cond_result = const_cond && (!conds || conds->val_int());
@@ -304,8 +291,8 @@ bool Sql_cmd_delete::delete_from_single_table(THD *thd) {
       }
     }
     if (conds) {
-      conds = substitute_for_best_equal_field(thd, conds, cond_equal, 0);
-      if (conds == NULL) return true;
+      conds = substitute_for_best_equal_field(thd, conds, cond_equal, nullptr);
+      if (conds == nullptr) return true;
 
       conds->update_used_tables();
     }
@@ -350,7 +337,7 @@ bool Sql_cmd_delete::delete_from_single_table(THD *thd) {
     Opt_trace_object wrapper(&thd->opt_trace);
     wrapper.add_utf8_table(delete_table_ref);
 
-    if (!no_rows && conds != NULL) {
+    if (!no_rows && conds != nullptr) {
       Key_map keys_to_use(Key_map::ALL_BITS), needed_reg_dummy;
       QUICK_SELECT_I *qck;
       no_rows = test_quick_select(thd, keys_to_use, 0, limit, safe_update,
@@ -435,7 +422,7 @@ bool Sql_cmd_delete::delete_from_single_table(THD *thd) {
     ha_rows examined_rows = 0;
     if (usable_index == MAX_KEY || qep_tab.quick())
       iterator =
-          create_table_iterator(thd, NULL, &qep_tab, false,
+          create_table_iterator(thd, nullptr, &qep_tab, false,
                                 /*ignore_not_found_rows=*/false, &examined_rows,
                                 /*using_table_scan=*/nullptr);
     else
@@ -450,14 +437,14 @@ bool Sql_cmd_delete::delete_from_single_table(THD *thd) {
                                                qep_tab.condition());
       }
 
-      fsort.reset(new (thd->mem_root)
-                      Filesort(thd, &qep_tab, order, HA_POS_ERROR,
-                               /*force_stable_sort=*/false,
-                               /*remove_duplicates=*/false,
-                               /*force_sort_positions=*/true));
-      unique_ptr_destroy_only<RowIterator> sort =
-          NewIterator<SortingIterator>(thd, fsort.get(), move(iterator),
-                                       /*rows_examined=*/nullptr);
+      fsort.reset(new (thd->mem_root) Filesort(
+          thd, table, /*keep_buffers=*/false, order, HA_POS_ERROR,
+          /*force_stable_sort=*/false,
+          /*remove_duplicates=*/false,
+          /*force_sort_positions=*/true, /*unwrap_rollup=*/false));
+      unique_ptr_destroy_only<RowIterator> sort = NewIterator<SortingIterator>(
+          thd, &qep_tab, fsort.get(), move(iterator),
+          /*rows_examined=*/nullptr);
       if (sort->Init()) return true;
       iterator = move(sort);
       thd->inc_examined_row_count(examined_rows);
@@ -466,7 +453,7 @@ bool Sql_cmd_delete::delete_from_single_table(THD *thd) {
         Filesort has already found and selected the rows we want to delete,
         so we don't need the where clause
       */
-      qep_tab.set_condition(NULL);
+      qep_tab.set_condition(nullptr);
     } else {
       if (iterator->Init()) return true;
     }
@@ -645,29 +632,11 @@ bool Sql_cmd_delete::prepare_inner(THD *thd) {
   Opt_trace_array trace_steps(trace, "steps");
 
   if (multitable) {
-    if (select->top_join_list.elements > 0)
-      propagate_nullability(&select->top_join_list, false);
-
-    Prepared_stmt_arena_holder ps_holder(thd);
-    result = new (thd->mem_root) Query_result_delete();
-    if (result == NULL) return true; /* purecov: inspected */
-
-    // The former is for the pre-iterator executor; the latter is for the
-    // iterator executor.
-    // TODO(sgunders): Get rid of this when we remove Query_result.
-    select->set_query_result(result);
-    select->master_unit()->set_query_result(result);
-
-    select->make_active_options(SELECT_NO_JOIN_CACHE | SELECT_NO_UNLOCK,
-                                OPTION_BUFFER_RESULT);
     apply_semijoin = true;
-    select->set_sj_candidates(&sj_candidates_local);
   } else {
     table_list->updating = true;
-    select->make_active_options(0, 0);
     apply_semijoin = false;
   }
-
   if (select->setup_tables(thd, table_list, false))
     return true; /* purecov: inspected */
 
@@ -716,7 +685,7 @@ bool Sql_cmd_delete::prepare_inner(THD *thd) {
     }
 
     // A view must be merged, and thus cannot have a TABLE
-    DBUG_ASSERT(!table_ref->is_view() || table_ref->table == NULL);
+    DBUG_ASSERT(!table_ref->is_view() || table_ref->table == nullptr);
 
     // Cannot delete from a storage engine that does not support delete.
     TABLE_LIST *base_table = table_ref->updatable_base_table();
@@ -731,20 +700,47 @@ bool Sql_cmd_delete::prepare_inner(THD *thd) {
     }
   }
 
+  if (!multitable && select->first_inner_unit() != nullptr &&
+      should_switch_to_multi_table_if_subqueries(thd, select, table_list))
+    multitable = true;
+
+  if (multitable) {
+    if (!select->top_join_list.empty())
+      propagate_nullability(&select->top_join_list, false);
+
+    Prepared_stmt_arena_holder ps_holder(thd);
+    result = new (thd->mem_root) Query_result_delete();
+    if (result == nullptr) return true; /* purecov: inspected */
+
+    // The former is for the pre-iterator executor; the latter is for the
+    // iterator executor.
+    // TODO(sgunders): Get rid of this when we remove Query_result.
+    select->set_query_result(result);
+    select->master_unit()->set_query_result(result);
+
+    select->make_active_options(SELECT_NO_JOIN_CACHE | SELECT_NO_UNLOCK,
+                                OPTION_BUFFER_RESULT);
+    select->set_sj_candidates(&sj_candidates_local);
+  } else {
+    select->make_active_options(0, 0);
+  }
+
   // Precompute and store the row types of NATURAL/USING joins.
   if (select->leaf_table_count >= 2 &&
       setup_natural_join_row_types(thd, select->join_list, &select->context))
     return true;
 
   // Enable the following code if allowing LIMIT with multi-table DELETE
-  DBUG_ASSERT(sql_command_code() == SQLCOM_DELETE || select->select_limit == 0);
+  DBUG_ASSERT(sql_command_code() == SQLCOM_DELETE ||
+              select->select_limit == nullptr);
 
   lex->allow_sum_func = 0;
 
   if (select->setup_conds(thd)) return true;
 
-  DBUG_ASSERT(select->having_cond() == NULL &&
-              select->group_list.elements == 0 && select->offset_limit == NULL);
+  DBUG_ASSERT(select->having_cond() == nullptr &&
+              select->group_list.elements == 0 &&
+              select->offset_limit == nullptr);
 
   if (select->master_unit()->prepare_limit(thd, select))
     return true; /* purecov: inspected */
@@ -803,12 +799,12 @@ bool Sql_cmd_delete::prepare_inner(THD *thd) {
   if (select->has_sj_candidates() && select->flatten_subqueries(thd))
     return true;
 
-  select->set_sj_candidates(NULL);
+  select->set_sj_candidates(nullptr);
 
   if (select->apply_local_transforms(thd, true))
     return true; /* purecov: inspected */
 
-  if (!multitable && select->is_empty_query()) set_empty_query();
+  if (select->is_empty_query()) set_empty_query();
 
   return false;
 }
@@ -817,6 +813,17 @@ bool Sql_cmd_delete::prepare_inner(THD *thd) {
   Execute a DELETE statement.
 */
 bool Sql_cmd_delete::execute_inner(THD *thd) {
+  if (is_empty_query()) {
+    if (lex->is_explain()) {
+      Modification_plan plan(thd, MT_DELETE, /*table_arg=*/nullptr,
+                             "No matching rows after partition pruning", true,
+                             0);
+      return explain_single_table_modification(thd, thd, &plan,
+                                               lex->select_lex);
+    }
+    my_ok(thd);
+    return false;
+  }
   return multitable ? Sql_cmd_dml::execute_inner(thd)
                     : delete_from_single_table(thd);
 }
@@ -963,8 +970,8 @@ void Query_result_delete::cleanup(THD *) {
   for (uint counter = 0; counter < delete_table_count; counter++) {
     if (tempfiles && tempfiles[counter]) destroy(tempfiles[counter]);
   }
-  tempfiles = NULL;
-  tables = NULL;
+  tempfiles = nullptr;
+  tables = nullptr;
 }
 
 bool Query_result_delete::send_data(THD *thd, List<Item> &) {
@@ -990,7 +997,7 @@ bool Query_result_delete::send_data(THD *thd, List<Item> &) {
       If not doing immediate deletion, increment unique_counter and assign
       "tempfile" here, so that it is available when and if it is needed.
     */
-    Unique *const tempfile = immediate ? NULL : tempfiles[unique_counter++];
+    Unique *const tempfile = immediate ? nullptr : tempfiles[unique_counter++];
 
     // Check if using outer join and no row found, or row is already deleted
     if (table->has_null_row() || table->has_deleted_row()) continue;
@@ -1110,7 +1117,7 @@ int Query_result_delete::do_deletes(THD *thd) {
 
   for (uint counter = 0; counter < delete_table_count; counter++) {
     TABLE *const table = tables[counter];
-    if (table == NULL) break;
+    if (table == nullptr) break;
 
     if (tempfiles[counter]->get(table)) return 1;
 
@@ -1252,6 +1259,10 @@ bool Query_result_delete::send_eof(THD *thd) {
     ::my_ok(thd, deleted_rows);
   }
   return thd->is_error();
+}
+
+bool Query_result_delete::immediate_update(TABLE_LIST *t) const {
+  return t->map() & delete_immediate;
 }
 
 bool Sql_cmd_delete::accept(THD *thd, Select_lex_visitor *visitor) {

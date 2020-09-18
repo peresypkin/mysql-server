@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2017, 2019, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2017, 2020, Oracle and/or its affiliates. All rights reserved.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -36,19 +36,7 @@ using InstanceVector = std::vector<metadata_cache::ManagedInstance>;
 
 using ::testing::_;
 
-// ignore GMock warnings
-#ifdef __clang__
-#ifndef __has_warning
-#define __has_warning(x) 0
-#endif
-#pragma clang diagnostic push
-#if __has_warning("-Winconsistent-missing-override")
-#pragma clang diagnostic ignored "-Winconsistent-missing-override"
-#endif
-#if __has_warning("-Wsign-conversion")
-#pragma clang diagnostic ignored "-Wsign-conversion"
-#endif
-#endif
+using namespace std::chrono_literals;
 
 class MetadataCacheAPIStub : public metadata_cache::MetadataCacheAPIBase {
  public:
@@ -70,6 +58,15 @@ class MetadataCacheAPIStub : public metadata_cache::MetadataCacheAPIBase {
     instances_change_listener_ = nullptr;
   }
 
+  MOCK_METHOD0(enable_fetch_auth_metadata, void());
+  MOCK_METHOD0(force_cache_update, void());
+  MOCK_CONST_METHOD0(check_auth_metadata_timers, void());
+
+  MOCK_CONST_METHOD1(
+      get_rest_user_auth_data,
+      std::pair<bool, std::pair<std::string, rapidjson::Document>>(
+          const std::string &));
+
   MOCK_METHOD2(mark_instance_reachability,
                void(const std::string &, InstanceStatus));
   MOCK_METHOD2(wait_primary_failover, bool(const std::string &, int));
@@ -81,6 +78,8 @@ class MetadataCacheAPIStub : public metadata_cache::MetadataCacheAPIBase {
       const std::vector<mysql_harness::TCPAddress> & /*metadata_servers*/,
       const mysqlrouter::UserCredentials & /*user_credentials*/,
       std::chrono::milliseconds /*ttl*/,
+      std::chrono::milliseconds /*auth_cache_ttl*/,
+      std::chrono::milliseconds /*auth_cache_refresh_interval*/,
       const mysqlrouter::SSLOptions & /*ssl_options*/,
       const std::string & /*cluster_name*/, int /*connect_timeout*/,
       int /*read_timeout*/,
@@ -102,9 +101,9 @@ class MetadataCacheAPIStub : public metadata_cache::MetadataCacheAPIBase {
   std::string instance_name() const override { return "foo"; }
   std::string cluster_type_specific_id() const override { return "foo"; }
   std::string cluster_name() const override { return "foo"; }
-  std::chrono::milliseconds ttl() const { return {}; }
+  std::chrono::milliseconds ttl() const override { return {}; }
 
-  RefreshStatus get_refresh_status() { return {}; }
+  RefreshStatus get_refresh_status() override { return {}; }
 
  public:
   void fill_instance_vector(const InstanceVector &iv) { instance_vector_ = iv; }
@@ -121,12 +120,10 @@ class MetadataCacheAPIStub : public metadata_cache::MetadataCacheAPIBase {
       nullptr};
 };
 
-#ifdef __clang__
-#pragma clang diagnostic pop
-#endif
-
 class DestMetadataCacheTest : public ::testing::Test {
  protected:
+  using result = stdx::expected<mysql_harness::socket_t, std::error_code>;
+
   void fill_instance_vector(const InstanceVector &iv) {
     metadata_cache_api_.fill_instance_vector(iv);
   }
@@ -151,20 +148,16 @@ TEST_F(DestMetadataCacheTest, StrategyFirstAvailableOnPrimaries) {
       &metadata_cache_api_, &routing_sock_ops_);
 
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3306", 3306, 33060},
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3307", 3307, 33061},
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3308", 3308, 33062},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3306",
+       3306, 33060},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3307",
+       3307, 33061},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadOnly, "3308",
+       3308, 33062},
   });
 
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3306);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3306);
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3306});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3306});
 }
 
 TEST_F(DestMetadataCacheTest, StrategyFirstAvailableOnSinglePrimary) {
@@ -176,20 +169,16 @@ TEST_F(DestMetadataCacheTest, StrategyFirstAvailableOnSinglePrimary) {
       &metadata_cache_api_, &routing_sock_ops_);
 
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3306", 3306, 33060},
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3307", 3307, 33061},
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3308", 3308, 33062},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3306",
+       3306, 33060},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadOnly, "3307",
+       3307, 33061},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadOnly, "3308",
+       3308, 33062},
   });
 
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3306);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3306);
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3306});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3306});
 }
 
 TEST_F(DestMetadataCacheTest, StrategyFirstAvailableOnNoPrimary) {
@@ -201,18 +190,16 @@ TEST_F(DestMetadataCacheTest, StrategyFirstAvailableOnNoPrimary) {
       &metadata_cache_api_, &routing_sock_ops_);
 
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3306", 3306, 33060},
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3307", 3307, 33061},
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3308", 3308, 33062},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadOnly, "3306",
+       3306, 33060},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadOnly, "3307",
+       3307, 33061},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadOnly, "3308",
+       3308, 33062},
   });
 
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_), -1);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_), -1);
+  ASSERT_FALSE(dest_mc_group.get_server_socket(0ms));
+  ASSERT_FALSE(dest_mc_group.get_server_socket(0ms));
 }
 
 TEST_F(DestMetadataCacheTest, StrategyFirstAvailableOnSecondaries) {
@@ -224,20 +211,16 @@ TEST_F(DestMetadataCacheTest, StrategyFirstAvailableOnSecondaries) {
       &metadata_cache_api_, &routing_sock_ops_);
 
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3306", 3306, 33060},
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3307", 3307, 33061},
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3308", 3308, 33062},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3306",
+       3306, 33060},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadOnly, "3307",
+       3307, 33061},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadOnly, "3308",
+       3308, 33062},
   });
 
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3307);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3307);
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3307});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3307});
 }
 
 TEST_F(DestMetadataCacheTest, StrategyFirstAvailableOnSingleSecondary) {
@@ -249,20 +232,16 @@ TEST_F(DestMetadataCacheTest, StrategyFirstAvailableOnSingleSecondary) {
       &metadata_cache_api_, &routing_sock_ops_);
 
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3306", 3306, 33060},
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3307", 3307, 33061},
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3308", 3308, 33062},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3306",
+       3306, 33060},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3307",
+       3307, 33061},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadOnly, "3308",
+       3308, 33062},
   });
 
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3308);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3308);
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3308});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3308});
 }
 
 TEST_F(DestMetadataCacheTest, StrategyFirstAvailableOnNoSecondary) {
@@ -274,18 +253,16 @@ TEST_F(DestMetadataCacheTest, StrategyFirstAvailableOnNoSecondary) {
       &metadata_cache_api_, &routing_sock_ops_);
 
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3306", 3306, 33060},
-      {kReplicasetName, "uuid2", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3307", 3307, 33061},
-      {kReplicasetName, "uuid3", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3308", 3308, 33062},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3306",
+       3306, 33060},
+      {kReplicasetName, "uuid2", metadata_cache::ServerMode::ReadWrite, "3307",
+       3307, 33061},
+      {kReplicasetName, "uuid3", metadata_cache::ServerMode::ReadWrite, "3308",
+       3308, 33062},
   });
 
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_), -1);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_), -1);
+  ASSERT_FALSE(dest_mc_group.get_server_socket(0ms));
+  ASSERT_FALSE(dest_mc_group.get_server_socket(0ms));
 }
 
 TEST_F(DestMetadataCacheTest, StrategyFirstAvailablePrimaryAndSecondary) {
@@ -298,20 +275,16 @@ TEST_F(DestMetadataCacheTest, StrategyFirstAvailablePrimaryAndSecondary) {
       &metadata_cache_api_, &routing_sock_ops_);
 
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3306", 3306, 33060},
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3307", 3307, 33061},
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3308", 3308, 33062},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3306",
+       3306, 33060},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadOnly, "3307",
+       3307, 33061},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadOnly, "3308",
+       3308, 33062},
   });
 
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3306);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3306);
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3306});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3306});
 }
 
 TEST_F(DestMetadataCacheTest, StrategyRoundRobinWithFallbackUnavailableServer) {
@@ -324,23 +297,17 @@ TEST_F(DestMetadataCacheTest, StrategyRoundRobinWithFallbackUnavailableServer) {
       &metadata_cache_api_, &routing_sock_ops_);
 
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::Unavailable,
-       1.0, 1, "3306", 3306, 33060},
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3307", 3307, 33061},
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3308", 3308, 33062},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::Unavailable,
+       "3306", 3306, 33060},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3307",
+       3307, 33061},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3308",
+       3308, 33062},
   });
 
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3307);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3308);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3307);
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3307});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3308});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3307});
 }
 
 /*****************************************/
@@ -355,28 +322,20 @@ TEST_F(DestMetadataCacheTest, StrategyRoundRobinOnPrimaries) {
       &metadata_cache_api_, &routing_sock_ops_);
 
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3306", 3306, 33060},
-      {kReplicasetName, "uuid2", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3307", 3307, 33061},
-      {kReplicasetName, "uuid3", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3308", 3308, 33062},
-      {kReplicasetName, "uuid4", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3309", 3309, 33063},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3306",
+       3306, 33060},
+      {kReplicasetName, "uuid2", metadata_cache::ServerMode::ReadWrite, "3307",
+       3307, 33061},
+      {kReplicasetName, "uuid3", metadata_cache::ServerMode::ReadWrite, "3308",
+       3308, 33062},
+      {kReplicasetName, "uuid4", metadata_cache::ServerMode::ReadOnly, "3309",
+       3309, 33063},
   });
 
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3306);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3307);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3308);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3306);
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3306});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3307});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3308});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3306});
 }
 
 TEST_F(DestMetadataCacheTest, StrategyRoundRobinOnSinglePrimary) {
@@ -388,20 +347,16 @@ TEST_F(DestMetadataCacheTest, StrategyRoundRobinOnSinglePrimary) {
       &metadata_cache_api_, &routing_sock_ops_);
 
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3306", 3306, 33060},
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3307", 3307, 33061},
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3308", 3308, 33062},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3306",
+       3306, 33060},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadOnly, "3307",
+       3307, 33061},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadOnly, "3308",
+       3308, 33062},
   });
 
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3306);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3306);
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3306});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3306});
 }
 
 TEST_F(DestMetadataCacheTest, StrategyRoundRobinPrimaryMissing) {
@@ -413,16 +368,14 @@ TEST_F(DestMetadataCacheTest, StrategyRoundRobinPrimaryMissing) {
       &metadata_cache_api_, &routing_sock_ops_);
 
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3307", 3307, 33061},
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3308", 3308, 33062},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadOnly, "3307",
+       3307, 33061},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadOnly, "3308",
+       3308, 33062},
   });
 
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_), -1);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_), -1);
+  ASSERT_FALSE(dest_mc_group.get_server_socket(0ms));
+  ASSERT_FALSE(dest_mc_group.get_server_socket(0ms));
 }
 
 TEST_F(DestMetadataCacheTest, StrategyRoundRobinOnSecondaries) {
@@ -434,28 +387,20 @@ TEST_F(DestMetadataCacheTest, StrategyRoundRobinOnSecondaries) {
       &metadata_cache_api_, &routing_sock_ops_);
 
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3306", 3306, 33060},
-      {kReplicasetName, "uuid2", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3307", 3307, 33061},
-      {kReplicasetName, "uuid3", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3308", 3308, 33062},
-      {kReplicasetName, "uuid4", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3309", 3309, 33063},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3306",
+       3306, 33060},
+      {kReplicasetName, "uuid2", metadata_cache::ServerMode::ReadOnly, "3307",
+       3307, 33061},
+      {kReplicasetName, "uuid3", metadata_cache::ServerMode::ReadOnly, "3308",
+       3308, 33062},
+      {kReplicasetName, "uuid4", metadata_cache::ServerMode::ReadOnly, "3309",
+       3309, 33063},
   });
 
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3307);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3308);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3309);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3307);
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3307});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3308});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3309});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3307});
 }
 
 TEST_F(DestMetadataCacheTest, StrategyRoundRobinOnSingleSecondary) {
@@ -467,20 +412,16 @@ TEST_F(DestMetadataCacheTest, StrategyRoundRobinOnSingleSecondary) {
       &metadata_cache_api_, &routing_sock_ops_);
 
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3306", 3306, 33060},
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3307", 3307, 33061},
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3308", 3308, 33062},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3306",
+       3306, 33060},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3307",
+       3307, 33061},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadOnly, "3308",
+       3308, 33062},
   });
 
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3308);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3308);
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3308});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3308});
 }
 
 TEST_F(DestMetadataCacheTest, StrategyRoundRobinSecondaryMissing) {
@@ -492,16 +433,14 @@ TEST_F(DestMetadataCacheTest, StrategyRoundRobinSecondaryMissing) {
       &metadata_cache_api_, &routing_sock_ops_);
 
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3307", 3307, 33061},
-      {kReplicasetName, "uuid2", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3308", 3308, 33062},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3307",
+       3307, 33061},
+      {kReplicasetName, "uuid2", metadata_cache::ServerMode::ReadWrite, "3308",
+       3308, 33062},
   });
 
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_), -1);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_), -1);
+  ASSERT_FALSE(dest_mc_group.get_server_socket(0ms));
+  ASSERT_FALSE(dest_mc_group.get_server_socket(0ms));
 }
 
 TEST_F(DestMetadataCacheTest, StrategyRoundRobinPrimaryAndSecondary) {
@@ -514,26 +453,18 @@ TEST_F(DestMetadataCacheTest, StrategyRoundRobinPrimaryAndSecondary) {
       &metadata_cache_api_, &routing_sock_ops_);
 
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3307", 3307, 33061},
-      {kReplicasetName, "uuid2", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3308", 3308, 33062},
-      {kReplicasetName, "uuid3", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3309", 3309, 33063},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3307",
+       3307, 33061},
+      {kReplicasetName, "uuid2", metadata_cache::ServerMode::ReadOnly, "3308",
+       3308, 33062},
+      {kReplicasetName, "uuid3", metadata_cache::ServerMode::ReadOnly, "3309",
+       3309, 33063},
   });
 
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3307);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3308);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3309);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3307);
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3307});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3308});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3309});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3307});
 }
 
 /*****************************************/
@@ -549,24 +480,18 @@ TEST_F(DestMetadataCacheTest, StrategyRoundRobinWithFallbackBasicScenario) {
       &metadata_cache_api_, &routing_sock_ops_);
 
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3306", 3306, 33060},
-      {kReplicasetName, "uuid2", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3307", 3307, 33061},
-      {kReplicasetName, "uuid3", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3308", 3308, 33062},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3306",
+       3306, 33060},
+      {kReplicasetName, "uuid2", metadata_cache::ServerMode::ReadOnly, "3307",
+       3307, 33061},
+      {kReplicasetName, "uuid3", metadata_cache::ServerMode::ReadOnly, "3308",
+       3308, 33062},
   });
 
   // we have 2 SECONDARIES up so we expect round robin on them
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3307);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3308);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3307);
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3307});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3308});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3307});
 }
 
 TEST_F(DestMetadataCacheTest, StrategyRoundRobinWithFallbackSingleSecondary) {
@@ -579,22 +504,18 @@ TEST_F(DestMetadataCacheTest, StrategyRoundRobinWithFallbackSingleSecondary) {
       &metadata_cache_api_, &routing_sock_ops_);
 
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3306", 3306, 33060},
-      {kReplicasetName, "uuid2", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3307", 3307, 33061},
-      {kReplicasetName, "uuid3", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3308", 3308, 33062},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3306",
+       3306, 33060},
+      {kReplicasetName, "uuid2", metadata_cache::ServerMode::ReadWrite, "3307",
+       3307, 33061},
+      {kReplicasetName, "uuid3", metadata_cache::ServerMode::ReadOnly, "3308",
+       3308, 33062},
   });
 
   // we do not fallback to PRIMARIES as long as there is at least single
   // SECONDARY available
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3308);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3308);
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3308});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3308});
 }
 
 TEST_F(DestMetadataCacheTest, StrategyRoundRobinWithFallbackNoSecondary) {
@@ -607,22 +528,16 @@ TEST_F(DestMetadataCacheTest, StrategyRoundRobinWithFallbackNoSecondary) {
       &metadata_cache_api_, &routing_sock_ops_);
 
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3306", 3306, 33060},
-      {kReplicasetName, "uuid2", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3307", 3307, 33061},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3306",
+       3306, 33060},
+      {kReplicasetName, "uuid2", metadata_cache::ServerMode::ReadWrite, "3307",
+       3307, 33061},
   });
 
   // no SECONDARY available so we expect round-robin on PRIAMRIES
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3306);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3307);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3306);
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3306});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3307});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3306});
 }
 
 TEST_F(DestMetadataCacheTest,
@@ -654,27 +569,19 @@ TEST_F(DestMetadataCacheTest, AllowPrimaryReadsBasic) {
       &metadata_cache_api_, &routing_sock_ops_);
 
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3306", 3306, 33060},
-      {kReplicasetName, "uuid2", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3307", 3307, 33061},
-      {kReplicasetName, "uuid2", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3308", 3308, 33062},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3306",
+       3306, 33060},
+      {kReplicasetName, "uuid2", metadata_cache::ServerMode::ReadOnly, "3307",
+       3307, 33061},
+      {kReplicasetName, "uuid2", metadata_cache::ServerMode::ReadOnly, "3308",
+       3308, 33062},
   });
 
   // we expect round-robin on all the servers (PRIMARY and SECONDARY)
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3306);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3307);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3308);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3306);
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3306});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3307});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3308});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3306});
 }
 
 TEST_F(DestMetadataCacheTest, AllowPrimaryReadsNoSecondary) {
@@ -687,17 +594,13 @@ TEST_F(DestMetadataCacheTest, AllowPrimaryReadsNoSecondary) {
       &metadata_cache_api_, &routing_sock_ops_);
 
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3306", 3306, 33060},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3306",
+       3306, 33060},
   });
 
   // we expect the PRIMARY being used
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3306);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3306);
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3306});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3306});
 }
 
 /*****************************************/
@@ -712,22 +615,16 @@ TEST_F(DestMetadataCacheTest, PrimaryDefault) {
       &metadata_cache_api_, &routing_sock_ops_);
 
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3306", 3306, 33060},
-      {kReplicasetName, "uuid2", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3307", 3307, 33061},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3306",
+       3306, 33060},
+      {kReplicasetName, "uuid2", metadata_cache::ServerMode::ReadWrite, "3307",
+       3307, 33061},
   });
 
   // default for PRIMARY should be round-robin on ReadWrite servers
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3306);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3307);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3306);
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3306});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3307});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3306});
 }
 
 TEST_F(DestMetadataCacheTest, SecondaryDefault) {
@@ -739,24 +636,18 @@ TEST_F(DestMetadataCacheTest, SecondaryDefault) {
       &metadata_cache_api_, &routing_sock_ops_);
 
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3306", 3306, 33060},
-      {kReplicasetName, "uuid2", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3307", 3307, 33061},
-      {kReplicasetName, "uuid3", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3308", 3308, 33062},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3306",
+       3306, 33060},
+      {kReplicasetName, "uuid2", metadata_cache::ServerMode::ReadOnly, "3307",
+       3307, 33061},
+      {kReplicasetName, "uuid3", metadata_cache::ServerMode::ReadOnly, "3308",
+       3308, 33062},
   });
 
   // default for SECONDARY should be round-robin on ReadOnly servers
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3307);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3308);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3307);
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3307});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3308});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3307});
 }
 
 TEST_F(DestMetadataCacheTest, PrimaryAndSecondaryDefault) {
@@ -769,28 +660,20 @@ TEST_F(DestMetadataCacheTest, PrimaryAndSecondaryDefault) {
       &metadata_cache_api_, &routing_sock_ops_);
 
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3306", 3306, 33060},
-      {kReplicasetName, "uuid2", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3307", 3307, 33061},
-      {kReplicasetName, "uuid3", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3308", 3308, 33062},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3306",
+       3306, 33060},
+      {kReplicasetName, "uuid2", metadata_cache::ServerMode::ReadOnly, "3307",
+       3307, 33061},
+      {kReplicasetName, "uuid3", metadata_cache::ServerMode::ReadOnly, "3308",
+       3308, 33062},
   });
 
   // default for PRIMARY_AND_SECONDARY should be round-robin on ReadOnly and
   // ReadWrite servers
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3306);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3307);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3308);
-  ASSERT_EQ(
-      dest_mc_group.get_server_socket(std::chrono::milliseconds(0), &err_),
-      3306);
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3306});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3307});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3308});
+  ASSERT_EQ(dest_mc_group.get_server_socket(0ms), result{3306});
 }
 
 /*****************************************/
@@ -811,20 +694,20 @@ TEST_F(DestMetadataCacheTest, AllowedNodesNoPrimary) {
       &metadata_cache_api_, &routing_sock_ops_);
 
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3306", 3306, 33060},
-      {kReplicasetName, "uuid2", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3307", 3307, 33070},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3306",
+       3306, 33060},
+      {kReplicasetName, "uuid2", metadata_cache::ServerMode::ReadOnly, "3307",
+       3307, 33070},
   });
 
   dest_mc_group.start(nullptr);
 
   // new metadata - no primary
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3306", 3306, 33060},
-      {kReplicasetName, "uuid2", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3307", 3307, 33070},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadOnly, "3306",
+       3306, 33060},
+      {kReplicasetName, "uuid2", metadata_cache::ServerMode::ReadOnly, "3307",
+       3307, 33070},
   });
 
   bool callback_called{false};
@@ -855,20 +738,20 @@ TEST_F(DestMetadataCacheTest, AllowedNodes2Primaries) {
       &metadata_cache_api_, &routing_sock_ops_);
 
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3306", 3306, 33060},
-      {kReplicasetName, "uuid2", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3307", 3307, 33070},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3306",
+       3306, 33060},
+      {kReplicasetName, "uuid2", metadata_cache::ServerMode::ReadOnly, "3307",
+       3307, 33070},
   });
 
   dest_mc_group.start(nullptr);
 
   // new metadata - no primary
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3306", 3306, 33060},
-      {kReplicasetName, "uuid2", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3307", 3307, 33070},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3306",
+       3306, 33060},
+      {kReplicasetName, "uuid2", metadata_cache::ServerMode::ReadWrite, "3307",
+       3307, 33070},
   });
 
   bool callback_called{false};
@@ -902,18 +785,18 @@ TEST_F(DestMetadataCacheTest, AllowedNodesNoSecondaries) {
       &metadata_cache_api_, &routing_sock_ops_);
 
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3306", 3306, 33060},
-      {kReplicasetName, "uuid2", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3307", 3307, 33070},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3306",
+       3306, 33060},
+      {kReplicasetName, "uuid2", metadata_cache::ServerMode::ReadOnly, "3307",
+       3307, 33070},
   });
 
   dest_mc_group.start(nullptr);
 
   // new metadata - no primary
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3306", 3306, 33060},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3306",
+       3306, 33060},
   });
 
   bool callback_called{false};
@@ -949,10 +832,10 @@ TEST_F(DestMetadataCacheTest, AllowedNodesSecondaryDisconnectToPromoted) {
       &metadata_cache_api_, &routing_sock_ops_);
 
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3306", 3306, 33060},
-      {kReplicasetName, "uuid2", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3307", 3307, 33070},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3306",
+       3306, 33060},
+      {kReplicasetName, "uuid2", metadata_cache::ServerMode::ReadOnly, "3307",
+       3307, 33070},
   });
 
   dest_mc_group.start(nullptr);
@@ -999,10 +882,10 @@ TEST_F(DestMetadataCacheTest, AllowedNodesSecondaryDisconnectToPromotedTwice) {
       &metadata_cache_api_, &routing_sock_ops_);
 
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3306", 3306, 33060},
-      {kReplicasetName, "uuid2", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3307", 3307, 33070},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3306",
+       3306, 33060},
+      {kReplicasetName, "uuid2", metadata_cache::ServerMode::ReadOnly, "3307",
+       3307, 33070},
   });
 
   dest_mc_group.start(nullptr);
@@ -1040,10 +923,10 @@ TEST_F(DestMetadataCacheTest,
       &metadata_cache_api_, &routing_sock_ops_);
 
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3306", 3306, 33060},
-      {kReplicasetName, "uuid2", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3307", 3307, 33070},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3306",
+       3306, 33060},
+      {kReplicasetName, "uuid2", metadata_cache::ServerMode::ReadOnly, "3307",
+       3307, 33070},
   });
 
   dest_mc_group.start(nullptr);
@@ -1087,10 +970,10 @@ TEST_F(DestMetadataCacheTest,
       &metadata_cache_api_, &routing_sock_ops_);
 
   fill_instance_vector({
-      {kReplicasetName, "uuid1", "HA", metadata_cache::ServerMode::ReadWrite,
-       1.0, 1, "3306", 3306, 33060},
-      {kReplicasetName, "uuid2", "HA", metadata_cache::ServerMode::ReadOnly,
-       1.0, 1, "3307", 3307, 33070},
+      {kReplicasetName, "uuid1", metadata_cache::ServerMode::ReadWrite, "3306",
+       3306, 33060},
+      {kReplicasetName, "uuid2", metadata_cache::ServerMode::ReadOnly, "3307",
+       3307, 33070},
   });
 
   dest_mc_group.start(nullptr);

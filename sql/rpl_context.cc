@@ -1,4 +1,4 @@
-/* Copyright (c) 2014, 2019, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2014, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -24,9 +24,11 @@
 
 #include <stddef.h>
 
+#include "libbinlogevents/include/compression/factory.h"
 #include "my_compiler.h"
 #include "my_dbug.h"
 #include "my_sqlcommand.h"
+#include "sql/binlog_ostream.h"
 #include "sql/rpl_gtid.h"   // Gtid_set
 #include "sql/sql_class.h"  // THD
 #include "sql/sql_lex.h"
@@ -96,7 +98,7 @@ bool Session_consistency_gtids_ctx::notify_after_gtid_executed_update(
   if (!shall_collect(thd)) return res;
 
   if (m_curr_session_track_gtids == OWN_GTID) {
-    DBUG_ASSERT(get_gtid_mode(GTID_MODE_LOCK_SID) != GTID_MODE_OFF);
+    DBUG_ASSERT(global_gtid_mode.get() != Gtid_mode::OFF);
     DBUG_ASSERT(thd->owned_gtid.sidno > 0);
     const Gtid &gtid = thd->owned_gtid;
     if (gtid.sidno == -1)  // we need to add thd->owned_gtid_set
@@ -191,4 +193,61 @@ void Last_used_gtid_tracker_ctx::set_last_used_gtid(const Gtid &gtid) {
 void Last_used_gtid_tracker_ctx::get_last_used_gtid(Gtid &gtid) {
   gtid.sidno = (*m_last_used_gtid).sidno;
   gtid.gno = (*m_last_used_gtid).gno;
+}
+
+const size_t Transaction_compression_ctx::DEFAULT_COMPRESSION_BUFFER_SIZE =
+    1024;
+
+Transaction_compression_ctx::Transaction_compression_ctx()
+    : m_compressor(nullptr) {}
+
+Transaction_compression_ctx::~Transaction_compression_ctx() {
+  if (m_compressor) {
+    unsigned char *buffer = nullptr;
+    std::tie(buffer, std::ignore, std::ignore) = m_compressor->get_buffer();
+    delete m_compressor;
+    if (buffer) free(buffer);
+  }
+}
+
+binary_log::transaction::compression::Compressor *
+Transaction_compression_ctx::get_compressor(THD *thd) {
+  auto ctype = (binary_log::transaction::compression::type)
+                   thd->variables.binlog_trx_compression_type;
+
+  if (m_compressor == nullptr ||
+      (m_compressor->compression_type_code() != ctype)) {
+    unsigned char *buffer = nullptr;
+    std::size_t capacity = 0;
+
+    // delete the existing one, reuse the buffer
+    if (m_compressor) {
+      std::tie(buffer, std::ignore, capacity) = m_compressor->get_buffer();
+      delete m_compressor;
+      m_compressor = nullptr;
+    }
+
+    // TODO: consider moving m_decompressor to a shared_ptr
+    auto comp =
+        binary_log::transaction::compression::Factory::build_compressor(ctype);
+
+    if (comp != nullptr) {
+      m_compressor = comp.release();
+
+      // inject an output buffer if possible, if not, then delete the compressor
+      if (buffer == nullptr)
+        buffer = (unsigned char *)malloc(DEFAULT_COMPRESSION_BUFFER_SIZE);
+
+      if (buffer != nullptr)
+        m_compressor->set_buffer(buffer, DEFAULT_COMPRESSION_BUFFER_SIZE);
+      else {
+        /* purecov: begin inspected */
+        // OOM
+        delete m_compressor;
+        m_compressor = nullptr;
+        /* purecov: end */
+      }
+    }
+  }
+  return m_compressor;
 }

@@ -1,4 +1,4 @@
-/* Copyright (c) 2010, 2019, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2010, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -31,6 +31,8 @@
 #include <time.h>
 #include <atomic>
 
+#include <mysql/components/minimal_chassis.h>
+#include <mysql/components/services/dynamic_loader_scheme_file.h>
 #include "lex_string.h"
 #include "m_ctype.h"
 #include "my_command.h"
@@ -443,6 +445,7 @@ extern PSI_mutex_key key_mutex_slave_worker_hash;
 extern PSI_rwlock_key key_rwlock_LOCK_logger;
 extern PSI_rwlock_key key_rwlock_channel_map_lock;
 extern PSI_rwlock_key key_rwlock_channel_lock;
+extern PSI_rwlock_key key_rwlock_gtid_mode_lock;
 extern PSI_rwlock_key key_rwlock_receiver_sid_lock;
 extern PSI_rwlock_key key_rwlock_rpl_filter_lock;
 extern PSI_rwlock_key key_rwlock_channel_to_filter_lock;
@@ -600,6 +603,8 @@ extern PSI_stage_info stage_suspending;
 extern PSI_stage_info stage_starting;
 extern PSI_stage_info stage_waiting_for_no_channel_reference;
 extern PSI_stage_info stage_hook_begin_trans;
+extern PSI_stage_info stage_binlog_transaction_compress;
+extern PSI_stage_info stage_binlog_transaction_decompress;
 #ifdef HAVE_PSI_STATEMENT_INTERFACE
 /**
   Statement instrumentation keys (sql).
@@ -619,9 +624,7 @@ extern PSI_statement_info com_statement_info[(uint)COM_END + 1];
 extern PSI_statement_info stmt_info_rpl;
 #endif /* HAVE_PSI_STATEMENT_INTERFACE */
 
-#ifdef HAVE_OPENSSL
 extern struct st_VioSSLFd *ssl_acceptor_fd;
-#endif /* HAVE_OPENSSL */
 
 extern bool opt_large_pages;
 extern uint opt_large_page_size;
@@ -674,6 +677,7 @@ extern mysql_mutex_t LOCK_compress_gtid_table;
 extern mysql_mutex_t LOCK_keyring_operations;
 extern mysql_mutex_t LOCK_collect_instance_log;
 extern mysql_mutex_t LOCK_tls_ctx_options;
+extern mysql_mutex_t LOCK_admin_tls_ctx_options;
 extern mysql_mutex_t LOCK_rotate_binlog_master_key;
 
 extern mysql_cond_t COND_server_started;
@@ -757,6 +761,11 @@ bool mysqld_partial_revokes();
 */
 void set_mysqld_partial_revokes(bool value);
 
+/**
+  Set m_opt_tracking_mode with a user given value associated with sysvar.
+*/
+void set_mysqld_opt_tracking_mode();
+
 #ifdef _WIN32
 
 bool is_windows_service();
@@ -768,4 +777,14 @@ bool update_named_pipe_full_access_group(const char *new_group_name);
 extern LEX_STRING opt_mandatory_roles;
 extern bool opt_mandatory_roles_cache;
 extern bool opt_always_activate_granted_roles;
+
+extern mysql_component_t mysql_component_mysql_server;
+extern mysql_component_t mysql_component_performance_schema;
+/* This variable is a registry handler, defined in mysql_server component and
+   used as a output parameter for minimal chassis. */
+extern SERVICE_TYPE_NO_CONST(registry) * srv_registry;
+/* These global variables which are defined and used in
+   mysql_server component */
+extern SERVICE_TYPE(dynamic_loader_scheme_file) * scheme_file_srv;
+extern SERVICE_TYPE(dynamic_loader) * dynamic_loader_srv;
 #endif /* MYSQLD_INCLUDED */

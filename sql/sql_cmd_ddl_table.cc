@@ -1,4 +1,4 @@
-/* Copyright (c) 2016, 2019, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2016, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -113,7 +113,7 @@ bool Sql_cmd_create_table::execute(THD *thd) {
 
   if (((lex->create_info->used_fields & HA_CREATE_USED_DATADIR) != 0 ||
        (lex->create_info->used_fields & HA_CREATE_USED_INDEXDIR) != 0) &&
-      check_access(thd, FILE_ACL, any_db, NULL, NULL, false, false)) {
+      check_access(thd, FILE_ACL, any_db, nullptr, nullptr, false, false)) {
     my_error(ER_SPECIFIC_ACCESS_DENIED_ERROR, MYF(0), "FILE");
     return true;
   }
@@ -134,6 +134,15 @@ bool Sql_cmd_create_table::execute(THD *thd) {
     create_info.db_type = create_info.options & HA_LEX_CREATE_TMP_TABLE
                               ? ha_default_temp_handlerton(thd)
                               : ha_default_handlerton(thd);
+
+  DBUG_ASSERT(create_info.db_type != nullptr);
+  if ((m_alter_info->flags & Alter_info::ANY_ENGINE_ATTRIBUTE) != 0 &&
+      ((create_info.db_type->flags & HTON_SUPPORTS_ENGINE_ATTRIBUTE) == 0 &&
+       DBUG_EVALUATE_IF("simulate_engine_attribute_support", false, true))) {
+    my_error(ER_ENGINE_ATTRIBUTE_NOT_SUPPORTED, MYF(0),
+             ha_resolve_storage_engine_name(create_info.db_type));
+    return true;
+  }
 
   /*
     Assign target tablespace name to enable locking in lock_table_names().
@@ -165,8 +174,8 @@ bool Sql_cmd_create_table::execute(THD *thd) {
 
   {
     partition_info *part_info = thd->lex->part_info;
-    if (part_info != NULL && has_external_data_or_index_dir(*part_info) &&
-        check_access(thd, FILE_ACL, any_db, NULL, NULL, false, false)) {
+    if (part_info != nullptr && has_external_data_or_index_dir(*part_info) &&
+        check_access(thd, FILE_ACL, any_db, nullptr, nullptr, false, false)) {
       return true;
     }
     if (part_info && !(part_info = thd->lex->part_info->get_clone(thd, true)))
@@ -176,7 +185,7 @@ bool Sql_cmd_create_table::execute(THD *thd) {
 
   bool res = false;
 
-  if (select_lex->item_list.elements)  // With select
+  if (select_lex->fields_list.elements)  // With select
   {
     Query_result *result;
 
@@ -193,6 +202,33 @@ bool Sql_cmd_create_table::execute(THD *thd) {
     if (lex->duplicates == DUP_REPLACE)
       lex->set_stmt_unsafe(LEX::BINLOG_STMT_UNSAFE_CREATE_REPLACE_SELECT);
 
+    /**
+      Disallow creation of foreign keys if,
+
+      - SE supports atomic DDL's.
+      - The binlogging is enabled.
+      - The binlog format is ROW.
+
+      This is done to avoid complications involved in locking,
+      updating and invalidation (in case of rollback) of DD cache
+      for parent table.
+    */
+    if ((alter_info.flags & Alter_info::ADD_FOREIGN_KEY) &&
+        (create_info.db_type->flags & HTON_SUPPORTS_ATOMIC_DDL) &&
+        mysql_bin_log.is_open() &&
+        (thd->variables.option_bits & OPTION_BIN_LOG) &&
+        thd->variables.binlog_format == BINLOG_FORMAT_ROW) {
+      my_error(ER_FOREIGN_KEY_WITH_ATOMIC_CREATE_SELECT, MYF(0));
+      return true;
+    }
+
+    // Reject request to CREATE TABLE AS SELECT with START TRANSACTION.
+    if (create_info.m_transactional_ddl) {
+      my_error(ER_NOT_ALLOWED_WITH_START_TRANSACTION, MYF(0),
+               "with CREATE TABLE ... AS SELECT statement.");
+      return true;
+    }
+
     /*
       If:
       a) we inside an SP and there was NAME_CONST substitution,
@@ -204,7 +240,7 @@ bool Sql_cmd_create_table::execute(THD *thd) {
     if (thd->query_name_consts && mysql_bin_log.is_open() &&
         thd->variables.binlog_format == BINLOG_FORMAT_STMT &&
         !mysql_bin_log.is_query_in_union(thd, thd->query_id)) {
-      List_iterator_fast<Item> it(select_lex->item_list);
+      List_iterator_fast<Item> it(select_lex->fields_list);
       Item *item;
       uint splocal_refs = 0;
       /* Count SP local vars in the top-level SELECT list */
@@ -279,7 +315,7 @@ bool Sql_cmd_create_table::execute(THD *thd) {
       needs to be created for every execution of a PS/SP.
     */
     if ((result = new (thd->mem_root) Query_result_create(
-             create_table, &create_info, &alter_info, select_lex->item_list,
+             create_table, &create_info, &alter_info, select_lex->fields_list,
              lex->duplicates, query_expression_tables))) {
       // For objects acquired during table creation.
       dd::cache::Dictionary_client::Auto_releaser releaser(thd->dd_client());
@@ -328,7 +364,7 @@ bool Sql_cmd_create_table::execute(THD *thd) {
           thd->session_tracker.get_tracker(SESSION_STATE_CHANGE_TRACKER)
               ->is_enabled())
         thd->session_tracker.get_tracker(SESSION_STATE_CHANGE_TRACKER)
-            ->mark_as_changed(thd, NULL);
+            ->mark_as_changed(thd, nullptr);
       my_ok(thd);
     }
   }
@@ -365,7 +401,7 @@ bool Sql_cmd_create_or_drop_index_base::execute(THD *thd) {
   */
   thd->enable_slow_log = opt_log_slow_admin_statements;
 
-  create_info.db_type = 0;
+  create_info.db_type = nullptr;
   create_info.row_type = ROW_TYPE_NOT_USED;
   create_info.default_table_charset = thd->variables.collation_database;
 

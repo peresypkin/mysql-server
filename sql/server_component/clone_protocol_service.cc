@@ -1,4 +1,4 @@
-/*  Copyright (c) 2018, 2019, Oracle and/or its affiliates. All rights reserved.
+/*  Copyright (c) 2018, 2020, Oracle and/or its affiliates. All rights reserved.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License, version 2.0,
@@ -34,14 +34,12 @@
 #include "sql/sql_class.h"
 #include "sql/sql_show.h"
 #include "sql/sql_thd_internal_api.h"
-#include "sql/ssl_acceptor_context.h"
+#include "sql/ssl_init_callback.h"
 #include "sql/sys_vars_shared.h"
 #include "sql_common.h"
 
 #include "sql/dd/cache/dictionary_client.h"
 #include "sql/dd/dictionary.h"
-
-void clone_protocol_service_init() { return; }
 
 DEFINE_METHOD(void, mysql_clone_start_statement,
               (THD * &thd, PSI_thread_key thread_key,
@@ -87,6 +85,7 @@ DEFINE_METHOD(void, mysql_clone_finish_statement, (THD * thd)) {
   DBUG_ASSERT(thd->m_statement_psi == nullptr);
 
   my_thread_end();
+  thd->set_psi(nullptr);
   destroy_thd(thd);
 }
 
@@ -275,9 +274,9 @@ DEFINE_METHOD(MYSQL *, mysql_clone_connect,
 
     OptionalString capath, cipher, ciphersuites, crl, crlpath, version;
 
-    SslAcceptorContext::read_parameters(nullptr, &capath, &version, nullptr,
-                                        &cipher, &ciphersuites, nullptr, &crl,
-                                        &crlpath);
+    server_main_callback.read_parameters(nullptr, &capath, &version, nullptr,
+                                         &cipher, &ciphersuites, nullptr, &crl,
+                                         &crlpath);
 
     mysql_ssl_set(mysql, ssl_ctx->m_ssl_key, ssl_ctx->m_ssl_cert,
                   ssl_ctx->m_ssl_ca, capath.c_str(), cipher.c_str());
@@ -301,7 +300,7 @@ DEFINE_METHOD(MYSQL *, mysql_clone_connect,
   }
 
   ret_mysql =
-      mysql_real_connect(mysql, host, user, passwd, nullptr, port, 0, 0);
+      mysql_real_connect(mysql, host, user, passwd, nullptr, port, nullptr, 0);
 
   if (ret_mysql == nullptr) {
     char err_buf[MYSYS_ERRMSG_SIZE + 64];

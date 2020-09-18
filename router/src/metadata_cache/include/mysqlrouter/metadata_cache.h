@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2016, 2019, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2016, 2020, Oracle and/or its affiliates. All rights reserved.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -33,6 +33,10 @@
 #include <string>
 #include <vector>
 
+#include "my_rapidjson_size_t.h"
+
+#include <rapidjson/document.h>
+
 #include "mysql_router_thread.h"
 #include "mysqlrouter/cluster_metadata.h"
 #include "mysqlrouter/datatypes.h"
@@ -60,9 +64,16 @@ extern const std::string kDefaultMetadataAddress;
 extern const std::string kDefaultMetadataUser;
 extern const std::string kDefaultMetadataPassword;
 extern const std::chrono::milliseconds kDefaultMetadataTTL;
+extern const std::chrono::milliseconds kDefaultAuthCacheTTL;
+extern const std::chrono::milliseconds kDefaultAuthCacheRefreshInterval;
 extern const std::string kDefaultMetadataCluster;
 extern const unsigned int kDefaultConnectTimeout;
 extern const unsigned int kDefaultReadTimeout;
+
+extern const std::string kNodeTagHidden;
+extern const std::string kNodeTagDisconnectWhenHidden;
+extern const bool kNodeTagHiddenDefault;
+extern const bool kNodeTagDisconnectWhenHiddenDefault;
 
 enum class ReplicasetStatus {
   AvailableWritable,
@@ -89,10 +100,8 @@ class METADATA_API ManagedInstance {
   ManagedInstance() = default;
   ManagedInstance(const std::string &p_replicaset_name,
                   const std::string &p_mysql_server_uuid,
-                  const std::string &p_role, const ServerMode p_mode,
-                  const float p_weight, const unsigned int p_version_token,
-                  const std::string &p_host, const uint16_t p_port,
-                  const uint16_t p_xport);
+                  const ServerMode p_mode, const std::string &p_host,
+                  const uint16_t p_port, const uint16_t p_xport);
 
   using TCPAddress = mysql_harness::TCPAddress;
   explicit ManagedInstance(const TCPAddress &addr);
@@ -103,20 +112,20 @@ class METADATA_API ManagedInstance {
   std::string replicaset_name;
   /** @brief The uuid of the MySQL server */
   std::string mysql_server_uuid;
-  /** @brief The role of the server */
-  std::string role;
   /** @brief The mode of the server */
   ServerMode mode;
-  /** @brief The server weight */
-  float weight;
-  /** @brief The version token of the server */
-  unsigned int version_token;
   /** @brief The host name on which the server is running */
   std::string host;
   /** The port number in which the server is running */
   uint16_t port;
   /** The X protocol port number in which the server is running */
   uint16_t xport;
+  /** Should the node be hidden from the application to use it */
+  bool hidden{kNodeTagHiddenDefault};
+  /** Should the Router disconnect existing client sessions to the node when it
+   * is hidden */
+  bool disconnect_existing_sessions_when_hidden{
+      kNodeTagDisconnectWhenHiddenDefault};
 };
 
 /** @class ManagedReplicaSet
@@ -133,6 +142,10 @@ class METADATA_API ManagedReplicaSet {
   bool single_primary_mode;
   /** @brief Id of the view this metadata represents (only used for AR now)*/
   unsigned view_id{0};
+  /** @brief Metadata for the replicaset is not consistent (only applicable for
+   * the GR cluster when the data in the GR metadata is not consistent with the
+   * cluster metadata)*/
+  bool md_discrepancy{false};
 };
 
 /** @class connection_error
@@ -275,6 +288,9 @@ class METADATA_API MetadataCacheAPIBase
    * @param metadata_servers The list of cluster metadata servers
    * @param user_credentials MySQL Metadata username and password
    * @param ttl The time to live for the cached data
+   * @param auth_cache_ttl TTL of the rest user authentication data
+   * @param auth_cache_refresh_interval Refresh rate of the rest user
+   *                                    authentication data
    * @param ssl_options SSL relatd options for connection
    * @param cluster_name The name of the cluster to be used.
    * @param connect_timeout The time in seconds after which trying to connect
@@ -295,7 +311,10 @@ class METADATA_API MetadataCacheAPIBase
       const std::string &cluster_type_specific_id,
       const std::vector<mysql_harness::TCPAddress> &metadata_servers,
       const mysqlrouter::UserCredentials &user_credentials,
-      std::chrono::milliseconds ttl, const mysqlrouter::SSLOptions &ssl_options,
+      const std::chrono::milliseconds ttl,
+      const std::chrono::milliseconds auth_cache_ttl,
+      const std::chrono::milliseconds auth_cache_refresh_interval,
+      const mysqlrouter::SSLOptions &ssl_options,
       const std::string &cluster_name, int connect_timeout, int read_timeout,
       size_t thread_stack_size = mysql_harness::kDefaultStackSizeInKiloBytes,
       bool use_cluster_notifications = false, const unsigned view_id = 0) = 0;
@@ -374,6 +393,40 @@ class METADATA_API MetadataCacheAPIBase
   virtual void remove_listener(const std::string &replicaset_name,
                                ReplicasetStateListenerInterface *listener) = 0;
 
+  /** @brief Get authentication data (password hash and privileges) for the
+   *  given user.
+   *
+   * @param username - name of the user for which the authentidation data
+   *                   is requested
+   * @return true and password hash with privileges - authentication data
+   * requested for the given user.
+   * @return false and empty data set - username is not found or authentication
+   * data expired.
+   */
+  virtual std::pair<bool, std::pair<std::string, rapidjson::Document>>
+  get_rest_user_auth_data(const std::string &username) const = 0;
+
+  /**
+   * @brief Enable fetching authentication metadata when using metadata_cache
+   * http authentication backend.
+   */
+  virtual void enable_fetch_auth_metadata() = 0;
+
+  /**
+   * Force cache update in refresh loop.
+   */
+  virtual void force_cache_update() = 0;
+
+  /**
+   * Check values of auth_cache_ttl and auth_cache_refresh_interval timers.
+   *
+   * @throw std::invalid_argument for each of the following scenarios:
+   * 1. auth_cache_ttl < ttl
+   * 2. auth_cache_refresh_interval < ttl
+   * 3. auth_cache_refresh_interval > auth_cache_ttl
+   */
+  virtual void check_auth_metadata_timers() const = 0;
+
   MetadataCacheAPIBase() = default;
   // disable copy as it isn't needed right now. Feel free to enable
   // must be explicitly defined though.
@@ -406,7 +459,10 @@ class METADATA_API MetadataCacheAPI : public MetadataCacheAPIBase {
       const std::string &cluster_type_specific_id,
       const std::vector<mysql_harness::TCPAddress> &metadata_servers,
       const mysqlrouter::UserCredentials &user_credentials,
-      std::chrono::milliseconds ttl, const mysqlrouter::SSLOptions &ssl_options,
+      const std::chrono::milliseconds ttl,
+      const std::chrono::milliseconds auth_cache_ttl,
+      const std::chrono::milliseconds auth_cache_refresh_interval,
+      const mysqlrouter::SSLOptions &ssl_options,
       const std::string &cluster_name, int connect_timeout, int read_timeout,
       size_t thread_stack_size, bool use_cluster_notifications,
       unsigned view_id) override;
@@ -439,6 +495,13 @@ class METADATA_API MetadataCacheAPI : public MetadataCacheAPIBase {
                        ReplicasetStateListenerInterface *listener) override;
 
   RefreshStatus get_refresh_status() override;
+
+  std::pair<bool, std::pair<std::string, rapidjson::Document>>
+  get_rest_user_auth_data(const std::string &user) const override;
+
+  void enable_fetch_auth_metadata() override;
+  void force_cache_update() override;
+  void check_auth_metadata_timers() const override;
 
  private:
   std::string inst_name_;

@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2014, 2019, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2014, 2020, Oracle and/or its affiliates. All Rights Reserved.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -38,6 +38,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 #include "dict0dict.h"
 #include "page0cur.h"
+#include "ut0class_life_cycle.h"
 #include "ut0new.h"
 
 /** Innodb B-tree index fill factor for bulk load. */
@@ -53,7 +54,7 @@ The proper function call sequence of PageBulk is as below:
 -- PageBulk::commit
 */
 
-class PageBulk {
+class PageBulk : private ut::Non_copyable {
  public:
   /** Page split point descriptor. */
   struct SplitPoint {
@@ -103,6 +104,10 @@ class PageBulk {
   /** Destructor */
   ~PageBulk() {
     if (m_heap) {
+      /* mtr is allocated using heap. */
+      if (m_mtr != nullptr) {
+        m_mtr->~mtr_t();
+      }
       mem_heap_free(m_heap);
     }
   }
@@ -116,11 +121,9 @@ class PageBulk {
   @param[in]  tuple     tuple to insert
   @param[in]  big_rec   external record
   @param[in]  rec_size  record size
-  @param[in]  n_ext     number of externally stored columns
   @return error code */
   dberr_t insert(const dtuple_t *tuple, const big_rec_t *big_rec,
-                 ulint rec_size, ulint n_ext)
-      MY_ATTRIBUTE((warn_unused_result));
+                 ulint rec_size) MY_ATTRIBUTE((warn_unused_result));
 
   /** Mark end of insertion to the page. Scan records to set page dirs,
   and set page header members. The scan is incremental (slots and records
@@ -381,11 +384,9 @@ class BtrBulk {
   @param[in]  big_rec     big record vector, maybe NULL if there is no
                           data to be stored externally.
   @param[in]  rec_size    record size
-  @param[in]  n_ext       number of externally stored columns
   @return error code */
   dberr_t insert(PageBulk *page_bulk, dtuple_t *tuple, big_rec_t *big_rec,
-                 ulint rec_size, ulint n_ext)
-      MY_ATTRIBUTE((warn_unused_result));
+                 ulint rec_size) MY_ATTRIBUTE((warn_unused_result));
 
   /** Log free check */
   void logFreeCheck();

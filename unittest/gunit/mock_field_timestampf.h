@@ -1,4 +1,4 @@
-/* Copyright (c) 2011, 2019, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2011, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -29,7 +29,7 @@
 class Mock_field_timestampf : public Field_timestampf {
   void initialize() {
     table = new Fake_TABLE(this);
-    EXPECT_FALSE(table == NULL) << "Out of memory";
+    EXPECT_FALSE(table == nullptr) << "Out of memory";
     ptr = table->record[0] + 1;
     set_null_ptr(table->record[0], 1);
   }
@@ -56,7 +56,7 @@ class Mock_field_timestampf : public Field_timestampf {
   }
 
   /* Averts ASSERT_COLUMN_MARKED_FOR_WRITE assertion. */
-  void make_writable() { bitmap_set_bit(table->write_set, field_index); }
+  void make_writable() { bitmap_set_bit(table->write_set, field_index()); }
 
   void store_timestamp_internal(const timeval *tm) {
     store_timestamp_internal_called = true;

@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2000, 2019, Oracle and/or its affiliates. All rights reserved.
+   Copyright (c) 2000, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -159,6 +159,9 @@ Error_log_throttle slave_ignored_err_throttle(
     " replicate-*-table rules\" got suppressed.");
 #endif /* MYSQL_SERVER */
 
+#include "libbinlogevents/include/codecs/binary.h"
+#include "libbinlogevents/include/codecs/factory.h"
+#include "libbinlogevents/include/compression/iterator.h"
 #include "sql/rpl_gtid.h"
 #include "sql/rpl_record.h"  // enum_row_image_type, Bit_reader
 #include "sql/rpl_utility.h"
@@ -970,6 +973,8 @@ const char *Log_event::get_type_str(Log_event_type type) {
       return "XA_prepare";
     case binary_log::PARTIAL_UPDATE_ROWS_EVENT:
       return "Update_rows_partial";
+    case binary_log::TRANSACTION_PAYLOAD_EVENT:
+      return "Transaction_payload";
     default:
       return "Unknown"; /* impossible */
   }
@@ -1247,7 +1252,13 @@ bool Log_event::need_checksum() {
         */
         get_type_code() == binary_log::PREVIOUS_GTIDS_LOG_EVENT ||
         /* FD is always checksummed */
-        get_type_code() == binary_log::FORMAT_DESCRIPTION_EVENT) &&
+        get_type_code() == binary_log::FORMAT_DESCRIPTION_EVENT ||
+        /*
+           View_change_log_event is queued into relay log by the
+           local member, which may have a different checksum algorithm
+           than the one of the event source.
+        */
+        get_type_code() == binary_log::VIEW_CHANGE_EVENT) &&
        common_footer->checksum_alg != binary_log::BINLOG_CHECKSUM_ALG_OFF));
 
   DBUG_ASSERT(common_footer->checksum_alg !=
@@ -1550,7 +1561,7 @@ static const uchar *get_quote_table() {
   Control characters are displayed as hex sequence, e.g. \x00
 
   @param[in] file              IO cache
-  @param[in] prt               Pointer to string
+  @param[in] ptr               Pointer to string
   @param[in] length            String length
 
   @retval false Success
@@ -1613,8 +1624,8 @@ static size_t my_b_write_quoted_with_length(IO_CACHE *file, const uchar *ptr,
   Prints a 32-bit number in both signed and unsigned representation
 
   @param[in] file              IO cache
-  @param[in] sl                Signed number
-  @param[in] ul                Unsigned number
+  @param[in] si                Signed number
+  @param[in] ui                Unsigned number
 */
 static void my_b_write_sint32_and_uint32(IO_CACHE *file, int32 si, uint32 ui) {
   my_b_printf(file, "%d", si);
@@ -2527,6 +2538,7 @@ bool Log_event::contains_partition_info(bool end_group_sets_max_dbs) {
   switch (get_type_code()) {
     case binary_log::TABLE_MAP_EVENT:
     case binary_log::EXECUTE_LOAD_QUERY_EVENT:
+    case binary_log::TRANSACTION_PAYLOAD_EVENT:
       res = true;
 
       break;
@@ -2792,6 +2804,7 @@ Slave_worker *Log_event::get_slave_worker(Relay_log_info *rli) {
            binary_log::DELETE_FILE_EVENT);
 
       DBUG_ASSERT((!ends_group() ||
+                   (get_type_code() == binary_log::TRANSACTION_PAYLOAD_EVENT) ||
                    (get_type_code() == binary_log::QUERY_EVENT &&
                     static_cast<Query_log_event *>(this)->is_query_prefix_match(
                         STRING_WITH_LEN("XA ROLLBACK")))) ||
@@ -2815,6 +2828,19 @@ Slave_worker *Log_event::get_slave_worker(Relay_log_info *rli) {
       */
       rli->curr_group_isolated = true;
     }
+#ifndef DBUG_OFF
+    {
+      std::ostringstream oss;
+      for (i = 0;
+           i < ((mts_dbs.num != OVER_MAX_DBS_IN_EVENT_MTS) ? mts_dbs.num : 1);
+           i++) {
+        if (mts_dbs.name[i] != 0) {
+          oss << mts_dbs.name[i] << ", ";
+        }
+      }
+      DBUG_PRINT("debug", ("ASSIGN %p %s", current_thd, oss.str().c_str()));
+    }
+#endif
 
     /* One run of the loop in the case of over-max-db:s */
     for (i = 0;
@@ -3674,6 +3700,11 @@ Query_log_event::Query_log_event()
   Returns true when the lex context determines an atomic DDL.
   The result is optimistic as there can be more properties to check out.
 
+  CREATE TABLE ... START TRANSACTION is not treated as atomic here, because
+  the table is not really committed at the end of CREATE TABLE processing.
+  It gets committed by a explicit call to COMMIT after INSERTing rows into
+  the table.
+
   @param lex  pointer to LEX object of being executed statement
 */
 inline bool is_sql_command_atomic_ddl(const LEX *lex) {
@@ -3682,7 +3713,8 @@ inline bool is_sql_command_atomic_ddl(const LEX *lex) {
           lex->sql_command != SQLCOM_REPAIR &&
           lex->sql_command != SQLCOM_ANALYZE) ||
          (lex->sql_command == SQLCOM_CREATE_TABLE &&
-          !(lex->create_info->options & HA_LEX_CREATE_TMP_TABLE)) ||
+          !(lex->create_info->options & HA_LEX_CREATE_TMP_TABLE) &&
+          !lex->create_info->m_transactional_ddl) ||
          (lex->sql_command == SQLCOM_DROP_TABLE && !lex->drop_temporary);
 }
 
@@ -3823,7 +3855,7 @@ Query_log_event::Query_log_event(THD *thd_arg, const char *query_arg,
       data_buf(nullptr) {
   /* save the original thread id; we already know the server id */
   slave_proxy_id = thd_arg->variables.pseudo_thread_id;
-  common_header->set_is_valid(query != 0);
+  common_header->set_is_valid(query != nullptr);
 
   /*
   exec_time calculation has changed to use the same method that is used
@@ -3979,8 +4011,9 @@ Query_log_event::Query_log_event(THD *thd_arg, const char *query_arg,
             lex->drop_temporary && thd->in_multi_stmt_transaction_mode();
         break;
       case SQLCOM_CREATE_TABLE:
-        cmd_must_go_to_trx_cache = lex->select_lex->item_list.elements &&
-                                   thd->is_current_stmt_binlog_format_row();
+        cmd_must_go_to_trx_cache =
+            lex->select_lex->get_fields_list()->elements &&
+            thd->is_current_stmt_binlog_format_row();
         cmd_can_generate_row_events =
             ((lex->create_info->options & HA_LEX_CREATE_TMP_TABLE) &&
              thd->in_multi_stmt_transaction_mode()) ||
@@ -4059,6 +4092,20 @@ Query_log_event::Query_log_event(THD *thd_arg, const char *query_arg,
 #endif
     event_logging_type = Log_event::EVENT_NORMAL_LOGGING;
     event_cache_type = Log_event::EVENT_TRANSACTIONAL_CACHE;
+  } else if (thd->lex->sql_command == SQLCOM_CREATE_TABLE &&
+             thd->lex->create_info->m_transactional_ddl) {
+    /*
+      When executing CREATE-TABLE-SELECT using engine that support atomic
+      DDL's, we cache the CREATE-TABLE event using normal logging. This
+      enables using single transaction for execution of both CREATE-TABLE
+      and INSERT's when applying the binlog events at slave.
+    */
+    event_logging_type = Log_event::EVENT_NORMAL_LOGGING;
+    event_cache_type = Log_event::EVENT_TRANSACTIONAL_CACHE;
+
+    DBUG_ASSERT(ddl_xid == binary_log::INVALID_XID);
+
+    if (thd->rli_slave) thd->rli_slave->ddl_not_atomic = true;
   } else {
     /*
       Note SQLCOM_XA_COMMIT, SQLCOM_XA_ROLLBACK fall into this block.
@@ -4120,7 +4167,7 @@ Query_log_event::Query_log_event(
     return;
   }
 
-  common_header->set_is_valid(query != 0 && q_len > 0);
+  common_header->set_is_valid(query != nullptr && q_len > 0);
 }
 
 #ifndef MYSQL_SERVER
@@ -4370,7 +4417,8 @@ void Query_log_event::print(FILE *, PRINT_EVENT_INFO *print_event_info) const {
 */
 void Query_log_event::attach_temp_tables_worker(THD *thd_arg,
                                                 const Relay_log_info *rli) {
-  rli->current_mts_submode->attach_temp_tables(thd_arg, rli, this);
+  if (!is_skip_temp_tables_handling_by_worker())
+    rli->current_mts_submode->attach_temp_tables(thd_arg, rli, this);
 }
 
 /**
@@ -4383,7 +4431,8 @@ void Query_log_event::attach_temp_tables_worker(THD *thd_arg,
 */
 void Query_log_event::detach_temp_tables_worker(THD *thd_arg,
                                                 const Relay_log_info *rli) {
-  rli->current_mts_submode->detach_temp_tables(thd_arg, rli, this);
+  if (!is_skip_temp_tables_handling_by_worker())
+    rli->current_mts_submode->detach_temp_tables(thd_arg, rli, this);
 }
 
 /*
@@ -4691,7 +4740,9 @@ int Query_log_event::do_apply_event(Relay_log_info const *rli,
         thd->variables.default_collation_for_utf8mb4 =
             &my_charset_utf8mb4_general_ci;
 
-      if (sql_require_primary_key != 0xff) {
+      if (sql_require_primary_key != 0xff &&
+          Relay_log_info::PK_CHECK_STREAM ==
+              rli->get_require_table_primary_key_check()) {
         DBUG_ASSERT(sql_require_primary_key == 0 ||
                     sql_require_primary_key == 1);
         if (!security_context.skip_priv_checks() &&
@@ -4773,6 +4824,10 @@ int Query_log_event::do_apply_event(Relay_log_info const *rli,
           query_start_status = thd->status_var;
         }
 
+        /*
+          Prevent "hanging" of previous rewritten query in SHOW PROCESSLIST.
+        */
+        thd->reset_rewritten_query();
         mysql_parse(thd, &parser_state);
 
         enum_sql_command command = thd->lex->sql_command;
@@ -4855,24 +4910,24 @@ int Query_log_event::do_apply_event(Relay_log_info const *rli,
       }
       goto end;
     }
-
     /* If the query was not ignored, it is printed to the general log */
     if (!thd->is_error() ||
         thd->get_stmt_da()->mysql_errno() != ER_SLAVE_IGNORED_TABLE) {
-      /* log the rewritten query if the query was rewritten
-         and the option to log raw was not set.
+      /*
+        Log the rewritten query if the query was rewritten
+        and the option to log raw was not set.
 
-         There is an assumption here. We assume that query log
-         events can never have multi-statement queries, thus the
-         parsed statement is the same as the raw one.
-       */
-      if (opt_general_log_raw || thd->rewritten_query.length() == 0)
+        There is an assumption here. We assume that query log
+        events can never have multi-statement queries, thus the
+        parsed statement is the same as the raw one.
+      */
+      if (opt_general_log_raw || thd->rewritten_query().length() == 0)
         query_logger.general_log_write(thd, COM_QUERY, thd->query().str,
                                        thd->query().length);
       else
         query_logger.general_log_write(thd, COM_QUERY,
-                                       thd->rewritten_query.c_ptr_safe(),
-                                       thd->rewritten_query.length());
+                                       thd->rewritten_query().ptr(),
+                                       thd->rewritten_query().length());
     }
 
   compare_errors:
@@ -5529,7 +5584,7 @@ Rotate_log_event::Rotate_log_event(const char *new_log_ident_arg,
   if (flags & DUP_NAME)
     new_log_ident = my_strndup(key_memory_log_event, new_log_ident_arg,
                                ident_len, MYF(MY_WME));
-  common_header->set_is_valid(new_log_ident != 0);
+  common_header->set_is_valid(new_log_ident != nullptr);
   if (flags & RELAY_LOG) set_relay_log_event();
 }
 #endif  // MYSQL_SERVER
@@ -6045,10 +6100,9 @@ bool Xid_log_event::do_commit(THD *thd_arg) {
    @return zero as success or non-zero as an error
 */
 int Xid_apply_log_event::do_apply_event_worker(Slave_worker *w) {
+  DBUG_TRACE;
   int error = 0;
   bool skipped_commit_pos = true;
-
-  DBUG_TRACE;
 
   lex_start(thd);
   mysql_reset_thd_for_next_command(thd);
@@ -6507,7 +6561,7 @@ bool User_var_log_event::write(Basic_ostream *ostream) {
   char buf[UV_NAME_LEN_SIZE];
   char buf1[UV_VAL_IS_NULL + UV_VAL_TYPE_SIZE + UV_CHARSET_NUMBER_SIZE +
             UV_VAL_LEN_SIZE];
-  uchar buf2[MY_MAX(8, DECIMAL_MAX_FIELD_SIZE + 2)], *pos = buf2;
+  uchar buf2[std::max(8, DECIMAL_MAX_FIELD_SIZE + 2)], *pos = buf2;
   uint unsigned_len = 0;
   uint buf1_length;
   ulong event_length;
@@ -6764,7 +6818,7 @@ int User_var_log_event::do_apply_event(Relay_log_info const *rli) {
     crash the server, so if fix fields fails, we just return with an
     error.
   */
-  if (e->fix_fields(thd, 0)) return 1;
+  if (e->fix_fields(thd, nullptr)) return 1;
 
   /*
     A variable can just be considered as a table with
@@ -6882,7 +6936,7 @@ Append_block_log_event::Append_block_log_event(THD *thd_arg, const char *db_arg,
                 using_trans ? Log_event::EVENT_TRANSACTIONAL_CACHE
                             : Log_event::EVENT_STMT_CACHE,
                 Log_event::EVENT_NORMAL_LOGGING, header(), footer()) {
-  common_header->set_is_valid(block != 0);
+  common_header->set_is_valid(block != nullptr);
 }
 #endif  // MYSQL_SERVER
 
@@ -7234,7 +7288,7 @@ bool Execute_load_query_log_event::write_post_header_for_derived(
 #ifndef MYSQL_SERVER
 void Execute_load_query_log_event::print(
     FILE *file, PRINT_EVENT_INFO *print_event_info) const {
-  print(file, print_event_info, 0);
+  print(file, print_event_info, nullptr);
 }
 
 /**
@@ -7530,8 +7584,6 @@ static const uchar *set_extra_data(uchar *arr) {
    function above.
 
    Will assert(false) if not.
-
-   @param extra_row_ndb_info
 */
 static void check_extra_row_ndb_info(uchar *extra_row_ndb_info) {
   assert(extra_row_ndb_info);
@@ -7623,11 +7675,11 @@ Rows_log_event::Rows_log_event(THD *thd_arg, TABLE *tbl_arg,
     }
   } else {
     // Needed because bitmap_init() does not set it to null on failure
-    m_cols.bitmap = 0;
+    m_cols.bitmap = nullptr;
   }
 
   if (bitmap_init(&write_set_backup, nullptr, tbl_arg->s->fields)) {
-    write_set_backup.bitmap = 0; /* purecov: deadcode */
+    write_set_backup.bitmap = nullptr; /* purecov: deadcode */
   }
 
   /*
@@ -7723,7 +7775,7 @@ Rows_log_event::Rows_log_event(
       }
     } else {
       // Needed because bitmap_init() does not set it to null on failure
-      m_cols_ai.bitmap = 0;
+      m_cols_ai.bitmap = nullptr;
       common_header->set_is_valid(false);
       return;
     }
@@ -7749,7 +7801,7 @@ Rows_log_event::Rows_log_event(
   }
 
   if (bitmap_init(&write_set_backup, nullptr, m_cols.n_bits)) {
-    write_set_backup.bitmap = 0; /* purecov: deadcode */
+    write_set_backup.bitmap = nullptr; /* purecov: deadcode */
   }
 
   /*
@@ -7763,7 +7815,7 @@ Rows_log_event::Rows_log_event(
 Rows_log_event::~Rows_log_event() {
   if (m_cols.bitmap) {
     if (m_cols.bitmap == m_bitbuf)  // no my_malloc happened
-      m_cols.bitmap = 0;            // so no my_free in bitmap_free
+      m_cols.bitmap = nullptr;      // so no my_free in bitmap_free
     bitmap_free(&m_cols);           // To pair with bitmap_init().
   }
   if (this->m_local_cols_ai.bitmap != nullptr &&
@@ -7987,9 +8039,9 @@ int Rows_log_event::do_add_row_data(uchar *row_data, size_t length) {
 static bool is_any_column_signaled_for_table(TABLE *table, MY_BITMAP *cols) {
   DBUG_TRACE;
 
-  for (Field **ptr = table->field; *ptr && ((*ptr)->field_index < cols->n_bits);
-       ptr++) {
-    if (bitmap_is_set(cols, (*ptr)->field_index)) return true;
+  for (Field **ptr = table->field;
+       *ptr && ((*ptr)->field_index() < cols->n_bits); ptr++) {
+    if (bitmap_is_set(cols, (*ptr)->field_index())) return true;
   }
 
   return false;
@@ -8340,7 +8392,7 @@ bool Rows_log_event::is_auto_inc_in_extra_columns() {
   DBUG_ASSERT(m_table);
   return (m_table->next_number_field &&
           this->m_fields.translate_position(
-              m_table->next_number_field->field_index) >= m_width);
+              m_table->next_number_field->field_index()) >= m_width);
 }
 
 /*
@@ -8420,9 +8472,9 @@ static bool record_compare(TABLE *table, MY_BITMAP *cols) {
    */
   else {
     for (Field **ptr = table->field;
-         *ptr && ((*ptr)->field_index < cols->n_bits) && !result; ptr++) {
+         *ptr && ((*ptr)->field_index() < cols->n_bits) && !result; ptr++) {
       Field *field = *ptr;
-      if (bitmap_is_set(cols, field->field_index) &&
+      if (bitmap_is_set(cols, field->field_index()) &&
           !field->is_virtual_gcol()) {
         /* compare null bit */
         if (field->is_null() != field->is_null_in_record(table->record[1]))
@@ -10356,7 +10408,7 @@ Table_map_log_event::Table_map_log_event(THD *thd_arg, TABLE *tbl,
       Use the fact the key is db/0/table_name/0
     As we rely on this let's assert it.
   */
-  DBUG_ASSERT((tbl->s->db.str == 0) ||
+  DBUG_ASSERT((tbl->s->db.str == nullptr) ||
               (tbl->s->db.str[tbl->s->db.length] == 0));
   DBUG_ASSERT(tbl->s->table_name.str[tbl->s->table_name.length] == 0);
 
@@ -10425,7 +10477,7 @@ Table_map_log_event::Table_map_log_event(THD *thd_arg, TABLE *tbl,
 
   memset(m_null_bits, 0, num_null_bytes);
   Bit_writer bit_writer{this->m_null_bits};
-  for (auto field : this->m_fields) bit_writer.set(field->maybe_null());
+  for (auto field : this->m_fields) bit_writer.set(field->is_nullable());
   /*
     Marking event to require sequential execution in MTS
     if the query might have updated FK-referenced db.
@@ -10907,7 +10959,7 @@ bool Table_map_log_event::init_signedness_field() {
   for (auto field : this->m_fields) {
     if (is_numeric_field(field)) {
       Field_num *field_num = dynamic_cast<Field_num *>(field);
-      if (field_num->unsigned_flag) flag |= mask;
+      if (field_num->is_unsigned()) flag |= mask;
 
       mask >>= 1;
 
@@ -11189,7 +11241,7 @@ void Table_map_log_event::print(FILE *,
    return the string name of a type.
 
    @param[in] type  type of a column
-   @param[in|out] meta_ptr  the meta_ptr of the column. If the type doesn't have
+   @param[in,out] meta_ptr  the meta_ptr of the column. If the type doesn't have
                             metadata, it will not change  meta_ptr, otherwise
                             meta_ptr will be moved to the end of the column's
                             metadat.
@@ -11613,6 +11665,10 @@ int Write_rows_log_event::do_before_row_operations(
   */
   thd->lex->sql_command = SQLCOM_INSERT;
 
+  DBUG_EXECUTE_IF(
+      "crash_on_transactional_ddl_insert",
+      if (thd->m_transactional_ddl.inited()) { DBUG_SUICIDE(); });
+
   /**
      todo: to introduce a property for the event (handler?) which forces
      applying the event in the replace (idempotent) fashion.
@@ -11705,13 +11761,13 @@ int Write_rows_log_event::do_after_row_operations(
    */
   if (is_auto_inc_in_extra_columns()) {
     bitmap_clear_bit(m_table->write_set,
-                     m_table->next_number_field->field_index);
+                     m_table->next_number_field->field_index());
     bitmap_clear_bit(m_table->read_set,
-                     m_table->next_number_field->field_index);
+                     m_table->next_number_field->field_index());
 
     if (get_flags(STMT_END_F)) m_table->file->ha_release_auto_increment();
   }
-  m_table->next_number_field = 0;
+  m_table->next_number_field = nullptr;
   m_table->autoinc_field_has_explicit_non_null_value = false;
   if ((local_error = m_table->file->ha_end_bulk_insert())) {
     m_table->file->print_error(local_error, MYF(0));
@@ -12180,7 +12236,7 @@ void Update_rows_log_event::init(MY_BITMAP const *cols) {
 Update_rows_log_event::~Update_rows_log_event() {
   if (m_cols_ai.bitmap) {
     if (m_cols_ai.bitmap == m_bitbuf_ai)  // no my_malloc happened
-      m_cols_ai.bitmap = 0;               // so no my_free in bitmap_free
+      m_cols_ai.bitmap = nullptr;         // so no my_free in bitmap_free
     bitmap_free(&m_cols_ai);              // To pair with bitmap_init().
   }
 }
@@ -12995,6 +13051,7 @@ void Gtid_log_event::set_trx_length_by_cache_size(ulonglong cache_size,
   transaction_length += get_commit_timestamp_length();
   transaction_length += get_server_version_length();
   transaction_length += is_checksum_enabled ? BINLOG_CHECKSUM_LEN : 0;
+
   /*
     Notice that it is not possible to determine the transaction_length field
     size using pack.cc:net_length_size() since the length of the field itself
@@ -13066,7 +13123,7 @@ Previous_gtids_log_event::Previous_gtids_log_event(const Gtid_set *set)
   }
   buf = buffer;
   // if buf is empty, is_valid will be false
-  common_header->set_is_valid(buf != 0);
+  common_header->set_is_valid(buf != nullptr);
 }
 
 int Previous_gtids_log_event::pack_info(Protocol *protocol) {
@@ -13486,7 +13543,20 @@ int View_change_log_event::do_apply_event(Relay_log_info const *rli) {
     return 0;
   }
 
+  /*
+    The view change is going to be written directly into the binary log and
+    its "data_written" field may change depending on local binlog-checksum
+    settings.
+
+    As MTS keep track of the size of the events on its queue relying on events
+    header data_written field, we must ensure that it should not change on the
+    event instance in memory (by backing it up before writing into binary log
+    and restoring it after it was written).
+  */
+  size_t original_ev_data_written = common_header->data_written;
   int error = mysql_bin_log.write_event(this);
+  if (original_ev_data_written)
+    common_header->data_written = original_ev_data_written;
   if (error)
     rli->report(ERROR_LEVEL, ER_SLAVE_FATAL_ERROR,
                 ER_THD(thd, ER_SLAVE_FATAL_ERROR),
@@ -13573,6 +13643,226 @@ void View_change_log_event::set_certification_info(
       (ENCODED_CERT_INFO_KEY_SIZE_LEN + ENCODED_CERT_INFO_VALUE_LEN) *
       certification_info.size();
 }
+
+size_t Transaction_payload_log_event::get_data_size() {
+  /* purecov: begin inspected */
+  DBUG_TRACE;
+  DBUG_ASSERT(false);
+  return 0;
+  /* purecov: end */
+}
+
+#ifdef MYSQL_SERVER
+uint8 Transaction_payload_log_event::get_mts_dbs(
+    Mts_db_names *arg, Rpl_filter *rpl_filter MY_ATTRIBUTE((unused))) {
+  Mts_db_names &mts_dbs = m_applier_ctx.get_mts_db_names();
+  if (mts_dbs.num == OVER_MAX_DBS_IN_EVENT_MTS) {
+    arg->name[0] = 0;
+    arg->num = OVER_MAX_DBS_IN_EVENT_MTS;
+  } else {
+    for (int i = 0; i < mts_dbs.num; i++) arg->name[i] = mts_dbs.name[i];
+    arg->num = mts_dbs.num;
+  }
+
+  return arg->num;
+}
+
+void Transaction_payload_log_event::set_mts_dbs(Mts_db_names &arg) {
+  m_applier_ctx.reset();
+  Mts_db_names &mts_dbs = m_applier_ctx.get_mts_db_names();
+  mts_dbs.num = arg.num;
+  if (mts_dbs.num < MAX_DBS_IN_EVENT_MTS) {
+    for (int i = 0; i < arg.num; i++)
+      // strndup already adds the string terminator
+      mts_dbs.name[i] = strndup(arg.name[i], NAME_LEN);
+  }
+#ifndef DBUG_OFF
+  else
+    DBUG_ASSERT(mts_dbs.num == OVER_MAX_DBS_IN_EVENT_MTS);
+#endif
+}
+
+uint8 Transaction_payload_log_event::mts_number_dbs() {
+  return m_applier_ctx.get_mts_db_names().num;
+}
+
+int Transaction_payload_log_event::do_apply_event(Relay_log_info const *rli) {
+  DBUG_TRACE;
+  int res = 0;
+  PSI_stage_info old_stage;
+
+  /* apply events in the payload */
+
+  binary_log::transaction::compression::Iterable_buffer it(
+      m_payload, m_payload_size, m_uncompressed_size, m_compression_type);
+
+  thd->enter_stage(&stage_binlog_transaction_decompress, &old_stage, __func__,
+                   __FILE__, __LINE__);
+  for (auto ptr : it) {
+    THD_STAGE_INFO(thd, old_stage);
+    if ((res = apply_payload_event(rli, (const uchar *)ptr))) break;
+    thd->enter_stage(&stage_binlog_transaction_decompress, &old_stage, __func__,
+                     __FILE__, __LINE__);
+  }
+  THD_STAGE_INFO(thd, old_stage);
+
+  return res;
+}
+
+static bool shall_delete_event_after_apply(Log_event *ev) {
+  bool res = false;
+  if (ev == nullptr) return res;
+  switch (ev->get_type_code()) {
+    case binary_log::FORMAT_DESCRIPTION_EVENT:
+      /*
+        Format_description_log_event should not be deleted because it will
+        be used to read info about the relay log's format; it will be
+        deleted when the SQL thread does not need it, i.e. when this
+        thread terminates.
+      */
+
+      /* fall through */
+    case binary_log::ROWS_QUERY_LOG_EVENT:
+      /*
+         ROWS_QUERY_LOG_EVENT is destroyed at the end of the current statement
+         clean-up routine.
+      */
+      res = false;
+      break;
+    default:
+      DBUG_PRINT("info", ("Deleting the event after it has been executed"));
+      res = true;
+      break;
+  }
+
+  return res;
+}
+
+bool Transaction_payload_log_event::apply_payload_event(
+    Relay_log_info const *rli, const uchar *event_buf) {
+  DBUG_TRACE;
+  bool res = false;
+  const uchar *ptr = event_buf;
+  Log_event *ev = nullptr;
+  bool copied_buffer = false;
+  uchar *copy_buffer = nullptr;
+
+  /*
+    disable checksums - there are no checksums for events inside the tple
+    otherwise, the last 4 bytes would be truncated.
+
+    We do this by copying the fdle from the rli. Then we disable the checksum
+    in the copy. Then we use it to decode the events in the payload instead
+    of the original fdle.
+
+    We allocate the fdle copy in the stack.
+
+    TODO: simplify this by breaking the binlog_event_deserialize API
+    and make it take a single boolean instead that states whether the
+    event has a checksum in it or not.
+  */
+  Format_description_event *fde = rli->get_rli_description_event();
+  Format_description_log_event fdle(fde->reader().buffer(), fde);
+  fdle.footer()->checksum_alg = binary_log::BINLOG_CHECKSUM_ALG_OFF;
+  fdle.register_temp_buf(const_cast<char *>(fde->reader().buffer()), false);
+  size_t event_len = uint4korr(ptr + EVENT_LEN_OFFSET);
+  if (binlog_event_deserialize(ptr, event_len, &fdle, true, &ev)) {
+    res = true;
+    goto end;
+  }
+
+  if (!shall_delete_event_after_apply(ev)) {
+    copy_buffer =
+        (uchar *)my_malloc(key_memory_log_event, event_len, MYF(MY_WME));
+    memcpy(copy_buffer, ptr, event_len);
+    copied_buffer = true;
+  } else {
+    copy_buffer = const_cast<uchar *>(ptr);
+    copied_buffer = false;
+  }
+
+  ev->register_temp_buf((char *)copy_buffer, copied_buffer);
+  ev->common_header->log_pos = header()->log_pos;
+
+  thd->server_id = ev->server_id;  // use the original server id for logging
+  thd->unmasked_server_id = ev->common_header->unmasked_server_id;
+  thd->set_time();  // time the query
+  thd->lex->set_current_select(0);
+  if (!ev->common_header->when.tv_sec)
+    my_micro_time_to_timeval(my_micro_time(), &ev->common_header->when);
+  ev->thd = thd;  // because up to this point, ev->thd == 0
+
+  // TODO: HATE THIS
+  if (is_mts_worker(thd)) {
+    auto worker =
+        static_cast<Slave_worker *>(const_cast<Relay_log_info *>(rli));
+    this->worker = worker;
+
+    // set in the event context
+    ev->future_event_relay_log_pos = this->future_event_relay_log_pos;
+    ev->mts_group_idx = mts_group_idx;
+    ev->worker = worker;
+
+    // set in the worker context
+    worker->set_future_event_relay_log_pos(ev->future_event_relay_log_pos);
+    worker->set_master_log_pos(static_cast<ulong>(ev->common_header->log_pos));
+    worker->set_gaq_index(ev->mts_group_idx);
+
+    if (ev->get_type_code() == binary_log::QUERY_EVENT)
+      static_cast<Query_log_event *>(ev)
+          ->set_skip_temp_tables_handling_by_worker();
+    res = ev->do_apply_event_worker(worker);
+  } else {
+    auto coord = const_cast<Relay_log_info *>(rli);
+    ev->future_event_relay_log_pos = coord->get_future_event_relay_log_pos();
+    res = ev->apply_event(coord);
+  }
+
+  if (shall_delete_event_after_apply(ev)) delete ev;
+
+end:
+  return res;
+}
+
+Log_event::enum_skip_reason Transaction_payload_log_event::do_shall_skip(
+    Relay_log_info *rli) {
+  return Log_event::continue_group(rli);
+}
+
+bool Transaction_payload_log_event::write(Basic_ostream *ostream) {
+  DBUG_TRACE;
+  auto codec = binary_log::codecs::Factory::build_codec(header()->type_code);
+  auto buffer_size = MAX_DATA_LENGTH + LOG_EVENT_HEADER_LEN;
+  unsigned char buffer[MAX_DATA_LENGTH + LOG_EVENT_HEADER_LEN];
+  auto result = codec->encode(*this, buffer, buffer_size);
+  size_t data_size = result.first + m_payload_size;
+
+  if (result.second == true) goto end;
+
+  return write_header(ostream, data_size) ||
+         wrapper_my_b_safe_write(ostream, (uchar *)buffer, result.first) ||
+         wrapper_my_b_safe_write(ostream,
+                                 reinterpret_cast<const uchar *>(m_payload),
+                                 m_payload_size) ||
+         write_footer(ostream);
+end:
+  return true;
+}
+
+int Transaction_payload_log_event::pack_info(Protocol *protocol) {
+  std::ostringstream oss;
+  oss << "compression='";
+  oss << binary_log::transaction::compression::type_to_string(
+      m_compression_type);
+  oss << "', decompressed_size=";
+  oss << m_uncompressed_size << " bytes";
+  protocol->store(oss.str().c_str(), &my_charset_bin);
+  return 0;
+}
+
+bool Transaction_payload_log_event::ends_group() const { return true; }
+
+#endif
 
 #ifndef MYSQL_SERVER
 /**

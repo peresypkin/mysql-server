@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2005, 2019, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2005, 2020, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2012, Facebook Inc.
 
 This program is free software; you can redistribute it and/or modify it under
@@ -151,15 +151,16 @@ bool page_zip_is_too_big(const dict_index_t *index, const dtuple_t *entry) {
   records on an empty non-leaf page.  This prevents
   infinite page splits. */
 
-  if (entry->n_fields >= n_uniq && (REC_NODE_PTR_SIZE +
-                                        rec_get_converted_size_comp_prefix(
-                                            index, entry->fields, n_uniq, NULL)
-                                        /* On a compressed page, there is
-                                        a two-byte entry in the dense
-                                        page directory for every record.
-                                        But there is no record header. */
-                                        - (REC_N_NEW_EXTRA_BYTES - 2) >
-                                    free_space_zip / 2)) {
+  if (entry->n_fields >= n_uniq &&
+      (REC_NODE_PTR_SIZE +
+           rec_get_converted_size_comp_prefix(index, entry->fields, n_uniq,
+                                              nullptr)
+           /* On a compressed page, there is
+           a two-byte entry in the dense
+           page directory for every record.
+           But there is no record header. */
+           - (REC_N_NEW_EXTRA_BYTES - 2) >
+       free_space_zip / 2)) {
     return (true);
   }
 
@@ -202,14 +203,12 @@ static void page_zip_compress_write_log(
     dict_index_t *index,            /*!< in: index of the B-tree node */
     mtr_t *mtr)                     /*!< in: mini-transaction */
 {
-  byte *log_ptr;
+  byte *log_ptr = nullptr;
   ulint trailer_size;
 
   ut_ad(!dict_index_is_ibuf(index));
 
-  log_ptr = mlog_open(mtr, 11 + 2 + 2);
-
-  if (!log_ptr) {
+  if (!mlog_open(mtr, 11 + 2 + 2, log_ptr)) {
     return;
   }
 
@@ -621,7 +620,7 @@ static int page_zip_compress_node_ptrs(
     mem_heap_t *heap)                /*!< in: temporary memory heap */
 {
   int err = Z_OK;
-  ulint *offsets = NULL;
+  ulint *offsets = nullptr;
 
   do {
     const rec_t *rec = *recs++;
@@ -830,7 +829,7 @@ static int page_zip_compress_clust(
     mem_heap_t *heap)                /*!< in: temporary memory heap */
 {
   int err = Z_OK;
-  ulint *offsets = NULL;
+  ulint *offsets = nullptr;
   /* BTR_EXTERN_FIELD_REF storage */
   byte *externs = storage - n_dense * (DATA_TRX_ID_LEN + DATA_ROLL_PTR_LEN);
 
@@ -962,7 +961,7 @@ ibool page_zip_compress(page_zip_des_t *page_zip, /*!< in: size; out: data,
   const auto usec = ut_time_monotonic_us();
 #endif /* !UNIV_HOTBACKUP */
 #ifdef PAGE_ZIP_COMPRESS_DBG
-  FILE *logfile = NULL;
+  FILE *logfile = nullptr;
 #endif
 #ifndef UNIV_HOTBACKUP
   /* A local copy of srv_cmp_per_index_enabled to avoid reading that
@@ -1482,8 +1481,8 @@ ibool page_zip_validate_low(
     }
 
     /* Compare the records. */
-    heap = NULL;
-    offsets = NULL;
+    heap = nullptr;
+    offsets = nullptr;
     rec = page_rec_get_next_low(page + PAGE_NEW_INFIMUM, TRUE);
     trec = page_rec_get_next_low(temp_page + PAGE_NEW_INFIMUM, TRUE);
 
@@ -1844,12 +1843,12 @@ byte *page_zip_parse_write_blob_ptr(
   ulint offset;
   ulint z_offset;
 
-  ut_ad(ptr != NULL);
-  ut_ad(end_ptr != NULL);
+  ut_ad(ptr != nullptr);
+  ut_ad(end_ptr != nullptr);
   ut_ad(!page == !page_zip);
 
   if (UNIV_UNLIKELY(end_ptr < ptr + (2 + 2 + BTR_EXTERN_FIELD_REF_SIZE))) {
-    return (NULL);
+    return (nullptr);
   }
 
   offset = mach_read_from_2(ptr);
@@ -1860,7 +1859,7 @@ byte *page_zip_parse_write_blob_ptr(
   corrupt:
     recv_sys->found_corrupt_log = TRUE;
 
-    return (NULL);
+    return (nullptr);
   }
 
   if (page) {
@@ -1869,14 +1868,14 @@ byte *page_zip_parse_write_blob_ptr(
     }
 
 #ifdef UNIV_ZIP_DEBUG
-    ut_a(page_zip_validate(page_zip, page, NULL));
+    ut_a(page_zip_validate(page_zip, page, nullptr));
 #endif /* UNIV_ZIP_DEBUG */
 
     memcpy(page + offset, ptr + 4, BTR_EXTERN_FIELD_REF_SIZE);
     memcpy(page_zip->data + z_offset, ptr + 4, BTR_EXTERN_FIELD_REF_SIZE);
 
 #ifdef UNIV_ZIP_DEBUG
-    ut_a(page_zip_validate(page_zip, page, NULL));
+    ut_a(page_zip_validate(page_zip, page, nullptr));
 #endif /* UNIV_ZIP_DEBUG */
   }
 
@@ -1901,15 +1900,15 @@ void page_zip_write_blob_ptr(
   ulint blob_no;
   ulint len;
 
-  ut_ad(page_zip != NULL);
-  ut_ad(rec != NULL);
-  ut_ad(index != NULL);
-  ut_ad(offsets != NULL);
+  ut_ad(page_zip != nullptr);
+  ut_ad(rec != nullptr);
+  ut_ad(index != nullptr);
+  ut_ad(offsets != nullptr);
   ut_ad(page_simple_validate_new((page_t *)page));
   ut_ad(page_zip_simple_validate(page_zip));
   ut_ad(page_zip_get_size(page_zip) > PAGE_DATA + page_zip_dir_size(page_zip));
   ut_ad(rec_offs_comp(offsets));
-  ut_ad(rec_offs_validate(rec, NULL, offsets));
+  ut_ad(rec_offs_validate(rec, nullptr, offsets));
   ut_ad(rec_offs_any_extern(offsets));
   ut_ad(rec_offs_nth_extern(offsets, n));
 
@@ -1943,24 +1942,25 @@ void page_zip_write_blob_ptr(
   ut_a(page_zip_validate(page_zip, page, index));
 #endif /* UNIV_ZIP_DEBUG */
 
-  if (mtr) {
-#ifndef UNIV_HOTBACKUP
-    byte *log_ptr = mlog_open(mtr, 11 + 2 + 2 + BTR_EXTERN_FIELD_REF_SIZE);
-    if (UNIV_UNLIKELY(!log_ptr)) {
-      return;
-    }
-
-    log_ptr = mlog_write_initial_log_record_fast(
-        (byte *)field, MLOG_ZIP_WRITE_BLOB_PTR, log_ptr, mtr);
-    mach_write_to_2(log_ptr, page_offset(field));
-    log_ptr += 2;
-    mach_write_to_2(log_ptr, externs - page_zip->data);
-    log_ptr += 2;
-    memcpy(log_ptr, externs, BTR_EXTERN_FIELD_REF_SIZE);
-    log_ptr += BTR_EXTERN_FIELD_REF_SIZE;
-    mlog_close(mtr, log_ptr);
-#endif /* !UNIV_HOTBACKUP */
+  if (mtr == nullptr) {
+    return;
   }
+#ifndef UNIV_HOTBACKUP
+  byte *log_ptr = nullptr;
+  if (!mlog_open(mtr, 11 + 2 + 2 + BTR_EXTERN_FIELD_REF_SIZE, log_ptr)) {
+    return;
+  }
+
+  log_ptr = mlog_write_initial_log_record_fast(
+      (byte *)field, MLOG_ZIP_WRITE_BLOB_PTR, log_ptr, mtr);
+  mach_write_to_2(log_ptr, page_offset(field));
+  log_ptr += 2;
+  mach_write_to_2(log_ptr, externs - page_zip->data);
+  log_ptr += 2;
+  memcpy(log_ptr, externs, BTR_EXTERN_FIELD_REF_SIZE);
+  log_ptr += BTR_EXTERN_FIELD_REF_SIZE;
+  mlog_close(mtr, log_ptr);
+#endif /* !UNIV_HOTBACKUP */
 }
 
 /** Parses a log record of writing the node pointer of a record.
@@ -1974,12 +1974,12 @@ byte *page_zip_parse_write_node_ptr(
   ulint offset;
   ulint z_offset;
 
-  ut_ad(ptr != NULL);
-  ut_ad(end_ptr != NULL);
+  ut_ad(ptr != nullptr);
+  ut_ad(end_ptr != nullptr);
   ut_ad(!page == !page_zip);
 
   if (UNIV_UNLIKELY(end_ptr < ptr + (2 + 2 + REC_NODE_PTR_SIZE))) {
-    return (NULL);
+    return (nullptr);
   }
 
   offset = mach_read_from_2(ptr);
@@ -1990,7 +1990,7 @@ byte *page_zip_parse_write_node_ptr(
   corrupt:
     recv_sys->found_corrupt_log = TRUE;
 
-    return (NULL);
+    return (nullptr);
   }
 
   if (page) {
@@ -2004,7 +2004,7 @@ byte *page_zip_parse_write_node_ptr(
     }
 
 #ifdef UNIV_ZIP_DEBUG
-    ut_a(page_zip_validate(page_zip, page, NULL));
+    ut_a(page_zip_validate(page_zip, page, nullptr));
 #endif /* UNIV_ZIP_DEBUG */
 
     field = page + offset;
@@ -2024,7 +2024,7 @@ byte *page_zip_parse_write_node_ptr(
     memcpy(storage, ptr + 4, REC_NODE_PTR_SIZE);
 
 #ifdef UNIV_ZIP_DEBUG
-    ut_a(page_zip_validate(page_zip, page, NULL));
+    ut_a(page_zip_validate(page_zip, page, nullptr));
 #endif /* UNIV_ZIP_DEBUG */
   }
 
@@ -2071,24 +2071,27 @@ void page_zip_write_node_ptr(
   mach_write_to_4(field, ptr);
   memcpy(storage, field, REC_NODE_PTR_SIZE);
 
-  if (mtr) {
-#ifndef UNIV_HOTBACKUP
-    byte *log_ptr = mlog_open(mtr, 11 + 2 + 2 + REC_NODE_PTR_SIZE);
-    if (UNIV_UNLIKELY(!log_ptr)) {
-      return;
-    }
-
-    log_ptr = mlog_write_initial_log_record_fast(field, MLOG_ZIP_WRITE_NODE_PTR,
-                                                 log_ptr, mtr);
-    mach_write_to_2(log_ptr, page_offset(field));
-    log_ptr += 2;
-    mach_write_to_2(log_ptr, storage - page_zip->data);
-    log_ptr += 2;
-    memcpy(log_ptr, field, REC_NODE_PTR_SIZE);
-    log_ptr += REC_NODE_PTR_SIZE;
-    mlog_close(mtr, log_ptr);
-#endif /* !UNIV_HOTBACKUP */
+  if (mtr == nullptr) {
+    return;
   }
+
+#ifndef UNIV_HOTBACKUP
+  byte *log_ptr = nullptr;
+
+  if (!mlog_open(mtr, 11 + 2 + 2 + REC_NODE_PTR_SIZE, log_ptr)) {
+    return;
+  }
+
+  log_ptr = mlog_write_initial_log_record_fast(field, MLOG_ZIP_WRITE_NODE_PTR,
+                                               log_ptr, mtr);
+  mach_write_to_2(log_ptr, page_offset(field));
+  log_ptr += 2;
+  mach_write_to_2(log_ptr, storage - page_zip->data);
+  log_ptr += 2;
+  memcpy(log_ptr, field, REC_NODE_PTR_SIZE);
+  log_ptr += REC_NODE_PTR_SIZE;
+  mlog_close(mtr, log_ptr);
+#endif /* !UNIV_HOTBACKUP */
 }
 
 /** Write the trx_id and roll_ptr of a record on a B-tree leaf node page. */
@@ -2110,7 +2113,7 @@ void page_zip_write_trx_id_and_roll_ptr(
   ut_ad(page_simple_validate_new(page));
   ut_ad(page_zip_simple_validate(page_zip));
   ut_ad(page_zip_get_size(page_zip) > PAGE_DATA + page_zip_dir_size(page_zip));
-  ut_ad(rec_offs_validate(rec, NULL, offsets));
+  ut_ad(rec_offs_validate(rec, nullptr, offsets));
   ut_ad(rec_offs_comp(offsets));
 
   ut_ad(page_zip->m_start >= PAGE_DATA);
@@ -2237,7 +2240,7 @@ void page_zip_rec_set_deleted(
     *slot &= ~(PAGE_ZIP_DIR_SLOT_DEL >> 8);
   }
 #ifdef UNIV_ZIP_DEBUG
-  ut_a(page_zip_validate(page_zip, page_align(rec), NULL));
+  ut_a(page_zip_validate(page_zip, page_align(rec), nullptr));
 #endif /* UNIV_ZIP_DEBUG */
 }
 
@@ -2469,12 +2472,12 @@ byte *page_zip_parse_write_header(
   ulint offset;
   ulint len;
 
-  ut_ad(ptr != NULL);
-  ut_ad(end_ptr != NULL);
+  ut_ad(ptr != nullptr);
+  ut_ad(end_ptr != nullptr);
   ut_ad(!page == !page_zip);
 
   if (UNIV_UNLIKELY(end_ptr < ptr + (1 + 1))) {
-    return (NULL);
+    return (nullptr);
   }
 
   offset = (ulint)*ptr++;
@@ -2484,11 +2487,11 @@ byte *page_zip_parse_write_header(
   corrupt:
     recv_sys->found_corrupt_log = TRUE;
 
-    return (NULL);
+    return (nullptr);
   }
 
   if (end_ptr < ptr + len) {
-    return (NULL);
+    return (nullptr);
   }
 
   if (page) {
@@ -2496,14 +2499,14 @@ byte *page_zip_parse_write_header(
       goto corrupt;
     }
 #ifdef UNIV_ZIP_DEBUG
-    ut_a(page_zip_validate(page_zip, page, NULL));
+    ut_a(page_zip_validate(page_zip, page, nullptr));
 #endif /* UNIV_ZIP_DEBUG */
 
     memcpy(page + offset, ptr, len);
     memcpy(page_zip->data + offset, ptr, len);
 
 #ifdef UNIV_ZIP_DEBUG
-    ut_a(page_zip_validate(page_zip, page, NULL));
+    ut_a(page_zip_validate(page_zip, page, nullptr));
 #endif /* UNIV_ZIP_DEBUG */
   }
 
@@ -2518,7 +2521,6 @@ void page_zip_write_header_log(
     ulint length,     /*!< in: length of the data */
     mtr_t *mtr)       /*!< in: mini-transaction */
 {
-  byte *log_ptr = mlog_open(mtr, 11 + 1 + 1);
   ulint offset = page_offset(data);
 
   ut_ad(offset < PAGE_DATA);
@@ -2528,8 +2530,9 @@ void page_zip_write_header_log(
 
   ut_ad(length < 256);
 
+  byte *log_ptr = nullptr;
   /* If no logging is requested, we may return now */
-  if (UNIV_UNLIKELY(!log_ptr)) {
+  if (!mlog_open(mtr, 11 + 1 + 1, log_ptr)) {
     return;
   }
 
@@ -2612,7 +2615,7 @@ ibool page_zip_reorganize(
   if (!index->is_clustered() && page_is_leaf(temp_page)) {
     /* Copy max trx id to recreated page */
     trx_id_t max_trx_id = page_get_max_trx_id(temp_page);
-    page_set_max_trx_id(block, NULL, max_trx_id, NULL);
+    page_set_max_trx_id(block, nullptr, max_trx_id, nullptr);
     ut_ad(max_trx_id != 0);
   }
 
@@ -2731,12 +2734,12 @@ byte *page_zip_parse_compress(
   ulint size;
   ulint trailer_size;
 
-  ut_ad(ptr != NULL);
-  ut_ad(end_ptr != NULL);
+  ut_ad(ptr != nullptr);
+  ut_ad(end_ptr != nullptr);
   ut_ad(!page == !page_zip);
 
   if (UNIV_UNLIKELY(ptr + (2 + 2) > end_ptr)) {
-    return (NULL);
+    return (nullptr);
   }
 
   size = mach_read_from_2(ptr);
@@ -2745,7 +2748,7 @@ byte *page_zip_parse_compress(
   ptr += 2;
 
   if (UNIV_UNLIKELY(ptr + 8 + size + trailer_size > end_ptr)) {
-    return (NULL);
+    return (nullptr);
   }
 
   if (page) {
@@ -2753,7 +2756,7 @@ byte *page_zip_parse_compress(
     corrupt:
       recv_sys->found_corrupt_log = TRUE;
 
-      return (NULL);
+      return (nullptr);
     }
 
     memcpy(page_zip->data + FIL_PAGE_PREV, ptr, 4);

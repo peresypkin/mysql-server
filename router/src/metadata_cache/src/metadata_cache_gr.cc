@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2019, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2019, 2020, Oracle and/or its affiliates. All rights reserved.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -491,7 +491,7 @@ bool GRMetadataCache::refresh() {
       break;
     }
 
-    if (!meta_data_->connect(metadata_server)) {
+    if (!meta_data_->connect_and_setup_session(metadata_server)) {
       log_error("Failed to connect to metadata server %s",
                 metadata_server.mysql_server_uuid.c_str());
       continue;
@@ -571,9 +571,9 @@ bool GRMetadataCache::fetch_metadata_from_connected_instance(
               rs.second.members.size(),
               rs.second.single_primary_mode ? "single-master" : "multi-master");
           for (const auto &mi : rs.second.members) {
-            log_info("    %s:%i / %i - role=%s mode=%s", mi.host.c_str(),
-                     mi.port, mi.xport, mi.role.c_str(),
-                     to_string(mi.mode).c_str());
+            log_info("    %s:%i / %i - mode=%s %s", mi.host.c_str(), mi.port,
+                     mi.xport, to_string(mi.mode).c_str(),
+                     get_hidden_info(mi).c_str());
 
             if (mi.mode == metadata_cache::ServerMode::ReadWrite) {
               // If we were running with a primary or secondary node gone

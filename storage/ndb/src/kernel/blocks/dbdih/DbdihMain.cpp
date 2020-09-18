@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2003, 2019, Oracle and/or its affiliates. All rights reserved.
+   Copyright (c) 2003, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -103,10 +103,24 @@ static const Uint32 WaitTableStateChangeMillis = 10;
 
 extern EventLogger * g_eventLogger;
 
-#ifdef VM_TRACE
+#if (defined(VM_TRACE) || defined(ERROR_INSERT))
+//#define DEBUG_MULTI_TRP 1
+//#define DEBUG_NODE_STOP 1
 //#define DEBUG_REDO_CONTROL 1
 //#define DEBUG_LCP 1
 #define DEBUG_LCP_COMP 1
+#endif
+
+#ifdef DEBUG_MULTI_TRP
+#define DEB_MULTI_TRP(arglist) do { g_eventLogger->info arglist ; } while (0)
+#else
+#define DEB_MULTI_TRP(arglist) do { } while (0)
+#endif
+
+#ifdef DEBUG_NODE_STOP
+#define DEB_NODE_STOP(arglist) do { g_eventLogger->info arglist ; } while (0)
+#else
+#define DEB_NODE_STOP(arglist) do { } while (0)
 #endif
 
 #ifdef DEBUG_REDO_CONTROL
@@ -297,6 +311,8 @@ void Dbdih::sendGCP_COMMIT(Signal* signal, Uint32 nodeId, Uint32 extra)
   req->nodeId = cownNodeId;
   req->gci_hi = Uint32(m_micro_gcp.m_master.m_new_gci >> 32);
   req->gci_lo = Uint32(m_micro_gcp.m_master.m_new_gci);
+  DEB_NODE_STOP(("Send GCP_COMMIT(%u,%u) to %u",
+                 req->gci_hi, req->gci_lo, nodeId));
   sendSignal(ref, GSN_GCP_COMMIT, signal, GCPCommit::SignalLength, JBA);
 
   ndbassert(m_micro_gcp.m_enabled || Uint32(m_micro_gcp.m_new_gci) == 0);
@@ -309,6 +325,9 @@ void Dbdih::sendGCP_PREPARE(Signal* signal, Uint32 nodeId, Uint32 extra)
   req->nodeId = cownNodeId;
   req->gci_hi = Uint32(m_micro_gcp.m_master.m_new_gci >> 32);
   req->gci_lo = Uint32(m_micro_gcp.m_master.m_new_gci);
+
+  DEB_NODE_STOP(("Send GCP_PREPARE(%u,%u) to %u",
+                 req->gci_hi, req->gci_lo, nodeId));
 
   if (! (ERROR_INSERTED(7201) || ERROR_INSERTED(7202)))
   {
@@ -1616,10 +1635,20 @@ void Dbdih::execCOPY_GCIREQ(Signal* signal)
     setNodeGroups();
     /**
      * We dont really need to make anything durable here...skip it
+     *
+     * We have received the current setting of node groups from the
+     * master node, we are thus ready to setup multi sockets to our
+     * neighbour nodes in the same node group.
+     *
+     * We should only reach here in the context of node restarts,
+     * initial and normal ones.
      */
-    c_copyGCISlave.m_copyReason = CopyGCIReq::IDLE;
-    signal->theData[0] = c_copyGCISlave.m_senderData;
-    sendSignal(c_copyGCISlave.m_senderRef, GSN_COPY_GCICONF, signal, 1, JBB);
+    ndbrequire(cstarttype == NodeState::ST_INITIAL_NODE_RESTART ||
+               cstarttype == NodeState::ST_NODE_RESTART);
+    jam();
+    m_set_up_multi_trp_in_node_restart = true;
+    signal->theData[0] = reference();
+    sendSignal(QMGR_REF, GSN_SET_UP_MULTI_TRP_REQ, signal, 1, JBB);
     return;
   }
   ndbrequire(ok);
@@ -1653,6 +1682,35 @@ void Dbdih::execCOPY_GCIREQ(Signal* signal)
   filePtr.p->reqStatus = FileRecord::OPENING_COPY_GCI;
   return;
 }//Dbdih::execCOPY_GCIREQ()
+
+void
+Dbdih::execSET_UP_MULTI_TRP_CONF(Signal *signal)
+{
+  if (m_set_up_multi_trp_in_node_restart)
+  {
+    jam();
+    g_eventLogger->info("Completed setting up multiple transporters to nodes"
+                        " in the same node group");
+    complete_restart_nr(signal);
+  }
+  else
+  {
+    jam();
+    /**
+     * Newly created multi sockets between nodes in a new nodegroup is now
+     * created. No need to do anything more here.
+     */
+  }
+}
+
+void
+Dbdih::complete_restart_nr(Signal* signal)
+{
+  jam();
+  c_copyGCISlave.m_copyReason = CopyGCIReq::IDLE;
+  signal->theData[0] = c_copyGCISlave.m_senderData;
+  sendSignal(c_copyGCISlave.m_senderRef, GSN_COPY_GCICONF, signal, 1, JBB);
+}
 
 void Dbdih::execDICTSTARTCONF(Signal* signal) 
 {
@@ -2300,10 +2358,12 @@ void Dbdih::execSTTOR(Signal* signal)
 
   switch(signal->theData[1]){
   case 1:
+    jam();
     createMutexes(signal, 0);
     init_lcp_pausing_module();
     return;
   case 3:
+    jam();
     signal->theData[0] = reference();
     sendSignal(NDBCNTR_REF, GSN_READ_NODESREQ, signal, 1, JBB);
     return;
@@ -4477,7 +4537,8 @@ void Dbdih::execSTART_MEREQ(Signal* signal)
   ndbrequire(isMaster());
   ndbrequire(c_nodeStartMaster.startNode == Tnodeid);
   ndbrequire(getNodeStatus(Tnodeid) == NodeRecord::STARTING);
-  
+
+  DEB_MULTI_TRP(("START_MEREQ"));
   {
     jam();
     /**
@@ -4565,13 +4626,16 @@ Dbdih::startme_copygci_conf(Signal* signal)
    * status to control the start of local checkpoints in a proper manner.
    * This code is only executed in master nodes.
    */
-  setNodeRecoveryStatus(c_nodeStartMaster.startNode,
-                        NodeRecord::WAIT_LCP_TO_COPY_DICT);
+  if (c_nodeStartMaster.startNode != RNIL)
+  {
+    setNodeRecoveryStatus(c_nodeStartMaster.startNode,
+                          NodeRecord::WAIT_LCP_TO_COPY_DICT);
 
-  Callback c = { safe_cast(&Dbdih::lcpBlockedLab), 
-                 c_nodeStartMaster.startNode };
-  Mutex mutex(signal, c_mutexMgr, c_nodeStartMaster.m_fragmentInfoMutex);
-  mutex.lock(c, true, true);
+    Callback c = { safe_cast(&Dbdih::lcpBlockedLab), 
+                   c_nodeStartMaster.startNode };
+    Mutex mutex(signal, c_mutexMgr, c_nodeStartMaster.m_fragmentInfoMutex);
+    mutex.lock(c, true, true);
+  }
 }
 
 void Dbdih::lcpBlockedLab(Signal* signal, Uint32 nodeId, Uint32 retVal)
@@ -17447,6 +17511,9 @@ void Dbdih::execGCP_PREPARECONF(Signal* signal)
   Uint32 gci_hi = signal->theData[1];
   Uint32 gci_lo = signal->theData[2];
 
+  DEB_NODE_STOP(("Recv GCP_PREPARECONF(%u,%u) from %u",
+                 gci_hi, gci_lo, senderNodeId));
+
   ndbrequire(signal->getLength() >= GCPPrepareConf::SignalLength);
 
   Uint64 gci = gci_lo | (Uint64(gci_hi) << 32);
@@ -17488,6 +17555,9 @@ void Dbdih::execGCP_NODEFINISH(Signal* signal)
   const Uint32 tcFailNo = signal->theData[2];
   const Uint32 gci_lo = signal->theData[3];
   const Uint64 gci = gci_lo | (Uint64(gci_hi) << 32);
+
+  DEB_NODE_STOP(("Recv GCP_NODEFINISH(%u,%u) from %u",
+                 gci_hi, gci_lo, senderNodeId));
 
   /* Check that there has not been a node failure since TC
    * reported this GCP complete...
@@ -17822,6 +17892,9 @@ void Dbdih::execGCP_PREPARE(Signal* signal)
   ndbrequire(signal->getLength() >= GCPPrepare::SignalLength);
   Uint64 gci = gci_lo | (Uint64(gci_hi) << 32);
 
+  DEB_NODE_STOP(("Recv GCP_PREPARE(%u,%u) from %u",
+                 gci_hi, gci_lo, masterNodeId));
+
   BlockReference retRef = calcDihBlockRef(masterNodeId);
 
   if (isMaster())
@@ -17886,6 +17959,8 @@ reply:
   conf->nodeId = cownNodeId;
   conf->gci_hi = gci_hi;
   conf->gci_lo = gci_lo;
+  DEB_NODE_STOP(("Send GCP_PREPARECONF(%u,%u) to %u",
+                 req->gci_hi, req->gci_lo, refToNode(retRef)));
   sendSignal(retRef, GSN_GCP_PREPARECONF, signal, 
              GCPPrepareConf::SignalLength, JBA);
   return;
@@ -17908,6 +17983,9 @@ void Dbdih::execGCP_COMMIT(Signal* signal)
   Uint32 masterNodeId = req->nodeId;
   Uint32 gci_hi = req->gci_hi;
   Uint32 gci_lo = req->gci_lo;
+
+  DEB_NODE_STOP(("Recv GCP_COMMIT(%u,%u) from %u",
+                 gci_hi, gci_lo, masterNodeId));
 
   ndbrequire(signal->getLength() >= GCPCommit::SignalLength);
   Uint64 gci = gci_lo | (Uint64(gci_hi) << 32);
@@ -17967,6 +18045,10 @@ void Dbdih::execGCP_COMMIT(Signal* signal)
     conf->gci_hi = (Uint32)(m_micro_gcp.m_old_gci >> 32);
     conf->failno = cfailurenr;
     conf->gci_lo = (Uint32)(m_micro_gcp.m_old_gci & 0xFFFFFFFF);
+
+    DEB_NODE_STOP(("Send GCP_NODEFINISH(%u,%u) to %u",
+                 conf->gci_hi, conf->gci_lo, refToNode(masterRef)));
+
     sendSignal(masterRef, GSN_GCP_NODEFINISH, signal,
                GCPNodeFinished::SignalLength, JBB);
     return;
@@ -18065,7 +18147,11 @@ Dbdih::execGCP_TCFINISHED_sync_conf(Signal* signal, Uint32 cb, Uint32 err)
   conf2->gci_hi = (Uint32)(m_micro_gcp.m_old_gci >> 32);
   conf2->failno = cb;  /* tcFailNo */
   conf2->gci_lo = (Uint32)(m_micro_gcp.m_old_gci & 0xFFFFFFFF);
-  sendSignal(retRef, GSN_GCP_NODEFINISH, signal, 
+
+  DEB_NODE_STOP(("2:Send GCP_NODEFINISH(%u,%u) to %u",
+                 conf2->gci_hi, conf2->gci_lo, refToNode(retRef)));
+
+  sendSignal(retRef, GSN_GCP_NODEFINISH, signal,
              GCPNodeFinished::SignalLength, JBB);
 }
 
@@ -24656,8 +24742,6 @@ void Dbdih::initCommonData()
   ndb_mgm_get_int_parameter(p, CFG_DB_LCP_INTERVAL, &c_lcpState.clcpDelay);
   c_lcpState.clcpDelay = c_lcpState.clcpDelay > 31 ? 31 : c_lcpState.clcpDelay;
   
-  //ndb_mgm_get_int_parameter(p, CFG_DB_MIN_HOT_SPARES, &cminHotSpareNodes);
-
   cnoReplicas = 1;
   ndb_mgm_get_int_parameter(p, CFG_DB_NO_REPLICAS, &cnoReplicas);
   if (cnoReplicas > MAX_REPLICAS)
@@ -25489,6 +25573,7 @@ void Dbdih::execCHECKNODEGROUPSREQ(Signal* signal)
   case CheckNodeGroups::GetNodeGroupMembers: {
     ok = true;
     Uint32 ng = Sysfile::getNodeGroup(sd->nodeId, SYSFILE->nodeGroups);
+    DEB_MULTI_TRP(("My node group is %u", ng));
     if (ng == NO_NODE_GROUP_ID)
       ng = RNIL;
 
@@ -25501,8 +25586,11 @@ void Dbdih::execCHECKNODEGROUPSREQ(Signal* signal)
     {
       jamNoBlock();
       ptrAss(ngPtr, nodeGroupRecord);
+      DEB_MULTI_TRP(("%u nodes in node group", ngPtr.p->nodeCount));
       for (Uint32 j = 0; j < ngPtr.p->nodeCount; j++) {
         jamNoBlock();
+        DEB_MULTI_TRP(("Node %u is in same node group",
+                       ngPtr.p->nodesInGroup[j]));
         sd->mask.set(ngPtr.p->nodesInGroup[j]);
       }
     }
@@ -26624,6 +26712,7 @@ void Dbdih::setNodeActiveStatus()
 /***************************************************************************/
 void Dbdih::setNodeGroups()
 {
+  DEB_MULTI_TRP(("setNodeGroups"));
   NodeGroupRecordPtr NGPtr;
   NodeRecordPtr sngNodeptr;
   Uint32 Ti;
@@ -26655,6 +26744,7 @@ void Dbdih::setNodeGroups()
       NGPtr.p->nodeCount++;
       ndbrequire(NGPtr.p->nodeCount <= cnoReplicas);
       add_nodegroup(NGPtr);
+      DEB_MULTI_TRP(("Node %u into node group %u", sngNodeptr.i, NGPtr.i));
       break;
     case Sysfile::NS_NotDefined:
     case Sysfile::NS_Configured:
@@ -26693,6 +26783,7 @@ void Dbdih::setNodeGroups()
    * replicas we will still only have one neighbour, so we will
    * have most communication with this neighbour node.
    */
+  startChangeNeighbourNode();
   for (Uint32 i = 0; i < NGPtr.p->nodeCount; i++)
   {
     jam();
@@ -26704,6 +26795,7 @@ void Dbdih::setNodeGroups()
       setNeighbourNode(nodeId);
     }
   }
+  endChangeNeighbourNode();
 }//Dbdih::setNodeGroups()
 
 /*************************************************************************/
@@ -28587,7 +28679,8 @@ void Dbdih::execWAIT_GCP_REQ(Signal* signal)
   ndbassert(requestType == WaitGCPReq::Complete ||
             requestType == WaitGCPReq::CompleteForceStart ||
             requestType == WaitGCPReq::CompleteIfRunning ||
-            requestType == WaitGCPReq::WaitEpoch);
+            requestType == WaitGCPReq::WaitEpoch ||
+            requestType == WaitGCPReq::ShutdownSync);
   
   /**
    * At this point, we wish to wait for some GCP/Epoch related
@@ -28601,6 +28694,10 @@ void Dbdih::execWAIT_GCP_REQ(Signal* signal)
    *                      Return latest completed GCI
    * WaitEpoch          : Wait for the next epoch completion,
    *                      and return its identity
+   * ShutdownSync       : Wait for all running nodes to request
+   *                      the same, then wait for the next
+   *                      GCI completion, and return its
+   *                      identity
    *
    * Notes
    *   For GCIs, the 'next' GCI is generally next GCI to *start* 
@@ -28707,6 +28804,8 @@ void Dbdih::execWAIT_GCP_REQ(Signal* signal)
        * containing the next epoch.
        */
       ptr.p->waitGCI = Uint32(m_micro_gcp.m_current_gci >> 32);
+      DEB_NODE_STOP(("waitGCI = %u",
+                     Uint32(m_micro_gcp.m_current_gci >> 32)));
       
       if (m_micro_gcp.m_master.m_state == MicroGcp::M_GCP_COMMIT)
       {
@@ -28722,6 +28821,8 @@ void Dbdih::execWAIT_GCP_REQ(Signal* signal)
          * CONF.
          */
         ptr.p->waitGCI = Uint32(m_micro_gcp.m_master.m_new_gci >> 32);
+        DEB_NODE_STOP(("2: waitGCI = %u",
+          Uint32(m_micro_gcp.m_master.m_new_gci >> 32)));
       }
 
       if (requestType == WaitGCPReq::CompleteForceStart)
@@ -28733,6 +28834,21 @@ void Dbdih::execWAIT_GCP_REQ(Signal* signal)
         NdbTick_Invalidate(&m_gcp_save.m_master.m_start_time);
       }//if
       
+      break;
+    }
+    case WaitGCPReq::ShutdownSync:
+    {
+      jam();
+
+      const Uint32 requestingNode = refToNode(senderRef);
+      ptr.p->waitGCI = WaitGCPMasterRecord::ShutdownSyncGci;
+
+      ndbrequire(requestingNode <= MAX_DATA_NODE_ID);
+      ndbrequire(!c_shutdownReqNodes.get(requestingNode));
+      c_shutdownReqNodes.set(requestingNode);
+
+      checkShutdownSync();
+
       break;
     }
     default:
@@ -28762,6 +28878,17 @@ void Dbdih::execWAIT_GCP_REQ(Signal* signal)
     req->senderData = ptr.i;
     req->senderRef = reference();
     req->requestType = requestType;
+
+    if (requestType == WaitGCPReq::ShutdownSync)
+    {
+      jam();
+      const Uint32 masterVersion = getNodeInfo(refToNode(cmasterdihref)).m_version;
+      if (!ndbd_support_waitgcp_shutdownsync(masterVersion))
+      {
+        jam();
+        req->requestType = WaitGCPReq::CompleteForceStart;
+      }
+    }
 
     sendSignal(cmasterdihref, GSN_WAIT_GCP_REQ, signal,
 	       WaitGCPReq::SignalLength, JBB);
@@ -28862,7 +28989,112 @@ void Dbdih::checkWaitGCPMaster(Signal* signal, NodeId failedNodeId)
       c_waitGCPMasterList.release(i);
     }//if
   }//while
+
+  /* Node failure might mean we are now shutdown sync ready */
+  checkShutdownSync();
 }//Dbdih::checkWaitGCPMaster()
+
+/**
+ * getNodeBitmap
+ *
+ * Function to set a bitmap/mask with a bit set for each
+ * node currently in the given list [and with a version
+ * passing the supplied version function test].
+ *
+ * e.g. cfirstAliveNode / cfirstDeadNode
+ *
+ */
+void Dbdih::getNodeBitmap(NdbNodeBitmask& map,
+                          Uint32 listHead,
+                          int (*versionFunction)(Uint32))
+{
+  jam();
+
+  map.clear();
+
+  NodeRecordPtr nodePtr;
+  nodePtr.i = listHead;
+  do
+  {
+    ptrCheckGuard(nodePtr, MAX_NDB_NODES, nodeRecord);
+    if (versionFunction != NULL)
+    {
+      if (versionFunction(getNodeInfo(nodePtr.i).m_version))
+      {
+        map.set(nodePtr.i);
+      }
+    }
+    else
+    {
+      map.set(nodePtr.i);
+    }
+    nodePtr.i = nodePtr.p->nextNode;
+  } while (nodePtr.i != RNIL);
+}
+
+/**
+ * checkShutdownSync
+ *
+ * Called when a new shutdown sync request or node failure
+ * occurs.
+ * If all currently live nodes have requested shutdown sync
+ * then we choose the next GCI, and update their queued requests
+ * to complete on that GCI boundary
+ */
+void Dbdih::checkShutdownSync()
+{
+  jam();
+
+  if (likely(c_shutdownReqNodes.isclear()))
+  {
+    /* Nothing happening */
+    return;
+  }
+
+  /* Get bitmap of current live nodes supporting shutdownSync */
+  NdbNodeBitmask allDataNodes;
+  getNodeBitmap(allDataNodes,
+                cfirstAliveNode,
+                &ndbd_support_waitgcp_shutdownsync);
+
+  if (c_shutdownReqNodes.contains(allDataNodes))
+  {
+    /**
+     * Now we have all nodes waiting for a GCI
+     * boundary, lets choose the next boundary, as is done
+     * for WaitGCPReq::CompleteForceStart to ensure that any
+     * committed transactions are durable.
+     */
+    Uint32 safeGCI = Uint32(m_micro_gcp.m_current_gci >> 32);
+    if (m_micro_gcp.m_master.m_state == MicroGcp::M_GCP_COMMIT)
+    {
+      safeGCI = Uint32(m_micro_gcp.m_master.m_new_gci >> 32);
+    }
+
+    g_eventLogger->info("Cluster shutdown durable gci : %u", safeGCI);
+
+    WaitGCPMasterPtr ptr;
+    c_waitGCPMasterList.first(ptr);
+    while(ptr.i != RNIL) {
+      jam();
+
+      if (ptr.p->waitGCI == WaitGCPMasterRecord::ShutdownSyncGci)
+      {
+        jam();
+        ptr.p->waitGCI = safeGCI;
+      }
+      c_waitGCPMasterList.next(ptr);
+    }
+
+    // Invalidating timestamps will force GCP_PREPARE/COMMIT
+    // and GCP_SAVEREQ et al ASAP
+    NdbTick_Invalidate(&m_micro_gcp.m_master.m_start_time);
+    NdbTick_Invalidate(&m_gcp_save.m_master.m_start_time);
+
+    c_shutdownReqNodes.clear();
+  }
+}
+
 
 void Dbdih::emptyWaitGCPMasterQueue(Signal* signal,
                                     Uint64 gci,
@@ -28882,7 +29114,7 @@ void Dbdih::emptyWaitGCPMasterQueue(Signal* signal,
     const BlockReference clientRef = ptr.p->clientRef;
     const Uint32 waitGCI = ptr.p->waitGCI;
 
-    c_waitGCPMasterList.next(ptr);
+    list.next(ptr);
     
     if (waitGCI != 0)
     {
@@ -29346,6 +29578,7 @@ Dbdih::execCREATE_NODEGROUP_IMPL_REQ(Signal* signal)
     }
 
     ndbrequire(rt == CreateNodegroupImplReq::RT_COMMIT);
+    bool our_node_in_new_nodegroup = false;
     for (Uint32 i = 0; i<cnoReplicas; i++)
     {
       Uint32 nodeId = req->nodes[i];
@@ -29354,6 +29587,11 @@ Dbdih::execCREATE_NODEGROUP_IMPL_REQ(Signal* signal)
       {
         jam();
         Sysfile::setNodeStatus(nodeId, SYSFILE->nodeStatus, Sysfile::NS_Active);
+        if (nodeId == getOwnNodeId())
+        {
+          jam();
+          our_node_in_new_nodegroup = true;
+        }
       }
       else
       {
@@ -29362,6 +29600,19 @@ Dbdih::execCREATE_NODEGROUP_IMPL_REQ(Signal* signal)
       }
       setNodeActiveStatus();
       setNodeGroups();
+    }
+    if (our_node_in_new_nodegroup)
+    {
+      jam();
+      /**
+       * We are part of a newly created node group. Thus it is now time to
+       * setup multi socket transporter to communicate with other nodes in
+       * the new node group.
+       */
+      DEB_MULTI_TRP(("Set up multi transporter after Create nodegroup"));
+      m_set_up_multi_trp_in_node_restart = false;
+      signal->theData[0] = reference();
+      sendSignal(QMGR_REF, GSN_SET_UP_MULTI_TRP_REQ, signal, 1, JBB);
     }
     break;
   }

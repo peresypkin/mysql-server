@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2007, 2018, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2007, 2020, Oracle and/or its affiliates. All Rights Reserved.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License, version 2.0, as published by the
@@ -135,8 +135,16 @@ struct i_s_trx_row_t {
   /*!< pointer to a row
   in innodb_locks if trx
   is waiting, or NULL */
-  ib_time_t trx_wait_started;       /*!< trx_t::wait_started */
-  uintmax_t trx_weight;             /*!< TRX_WEIGHT() */
+
+  /** The value of trx->lock.wait_started */
+  ib_time_t trx_wait_started;
+  /** The value of TRX_WEIGHT(trx) */
+  uintmax_t trx_weight;
+  /** If `first` is `true` then `second` is the value of the
+  trx->lock.schedule_weight, otherwise the `second` should be ignored and
+  displayed as NULL to the end user.
+  (This could be std::optional once we move to C++17) */
+  std::pair<bool, trx_schedule_weight_t> trx_schedule_weight;
   ulint trx_mysql_thread_id;        /*!< thd_get_thread_id() */
   const char *trx_query;            /*!< MySQL statement being
                                     executed in the transaction */
@@ -225,8 +233,10 @@ int trx_i_s_possibly_fetch_data_into_cache(
 
 /** Returns TRUE if the data in the cache is truncated due to the memory
  limit posed by TRX_I_S_MEM_LIMIT.
+ @param[in]   cache   The cache
  @return true if truncated */
-ibool trx_i_s_cache_is_truncated(trx_i_s_cache_t *cache); /*!< in: cache */
+bool trx_i_s_cache_is_truncated(trx_i_s_cache_t *cache);
+
 /** The maximum length of a resulting lock_id_size in
 trx_i_s_create_lock_id(), not including the terminating NUL.
 "%lu:%lu:%lu:%lu:%lu" -> 20*5+4 chars */

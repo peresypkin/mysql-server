@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2000, 2019, Oracle and/or its affiliates. All rights reserved.
+   Copyright (c) 2000, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -147,6 +147,7 @@ class READ_INFO {
   /* load xml */
   List<XML_TAG> taglist;
   int read_value(int delim, String *val);
+  int read_cdata(String *val, bool *have_cdata);
   bool read_xml();
   void clear_level(int level);
 
@@ -248,9 +249,9 @@ bool Sql_cmd_load_table::execute_inner(THD *thd,
               !table_list->is_derived()
           ?  // derived tables not allowed
           table_list->updatable_base_table()
-          : NULL;
+          : nullptr;
 
-  if (insert_table_ref == NULL ||
+  if (insert_table_ref == nullptr ||
       check_key_in_view(thd, table_list, insert_table_ref)) {
     my_error(ER_NON_UPDATABLE_TABLE, MYF(0), table_list->alias, "LOAD");
     return true;
@@ -298,7 +299,7 @@ bool Sql_cmd_load_table::execute_inner(THD *thd,
       Item *item;
       if (!(item = field_iterator.create_item(thd))) return true;
 
-      if (item->field_for_view_update() == NULL) {
+      if (item->field_for_view_update() == nullptr) {
         my_error(ER_NONUPDATEABLE_COLUMN, MYF(0), item->item_name.ptr());
         return true;
       }
@@ -334,7 +335,7 @@ bool Sql_cmd_load_table::execute_inner(THD *thd,
     while ((item = it++)) {
       if ((item->type() == Item::FIELD_ITEM ||
            item->type() == Item::REF_ITEM) &&
-          item->field_for_view_update() == NULL) {
+          item->field_for_view_update() == nullptr) {
         my_error(ER_NONUPDATEABLE_COLUMN, MYF(0), item->item_name.ptr());
         return true;
       }
@@ -347,7 +348,7 @@ bool Sql_cmd_load_table::execute_inner(THD *thd,
         */
         Item_func_set_user_var *user_var = new (thd->mem_root)
             Item_func_set_user_var(item->item_name, item, false);
-        if (user_var == NULL) return true;
+        if (user_var == nullptr) return true;
         thd->lex->set_var_list.push_back(user_var);
       }
     }
@@ -417,7 +418,7 @@ bool Sql_cmd_load_table::execute_inner(THD *thd,
 
     if (real_item->type() == Item::FIELD_ITEM) {
       const Field *field = down_cast<const Item_field *>(real_item)->field;
-      if (field->flags & BLOB_FLAG) {
+      if (field->is_flag_set(BLOB_FLAG)) {
         use_blobs = true;
         tot_length += 256;  // Will be extended if needed
       } else
@@ -546,7 +547,7 @@ bool Sql_cmd_load_table::execute_inner(THD *thd,
       table->file->print_error(my_errno(), MYF(0));
       error = true;
     }
-    table->next_number_field = 0;
+    table->next_number_field = nullptr;
   }
   if (file >= 0) mysql_file_close(file, MYF(0));
   free_blobs(table); /* if pack_blob was used */
@@ -667,13 +668,13 @@ bool Sql_cmd_load_table::write_execute_load_query_log_event(
     bool is_concurrent, enum enum_duplicates duplicates,
     bool transactional_table, int errcode) {
   const char *tbl = table_name_arg;
-  const char *tdb = (thd->db().str != NULL ? thd->db().str : db_arg);
-  const String *query = NULL;
+  const char *tdb = (thd->db().str != nullptr ? thd->db().str : db_arg);
+  const String *query = nullptr;
   String string_buf;
   size_t fname_start = 0;
   size_t fname_end = 0;
 
-  if (thd->db().str == NULL || strcmp(db_arg, thd->db().str)) {
+  if (thd->db().str == nullptr || strcmp(db_arg, thd->db().str)) {
     /*
       If used database differs from table's database,
       prefix table name with database name so that it
@@ -700,8 +701,36 @@ bool Sql_cmd_load_table::write_execute_load_query_log_event(
   return mysql_bin_log.write_event(&e);
 }
 
+namespace {
+/**
+  Checks if an item is a hidden generated column.
+
+  @param table       Pointer to TABLE object
+  @param item        Item to check
+
+  @returns true if checked item is a hidden generated column.
+*/
+inline bool is_hidden_generated_column(TABLE *table, Item *item) {
+  Item *real_item = item->real_item();
+  if (table->has_gcol() && real_item->type() == Item::FIELD_ITEM) {
+    const Field *field = down_cast<Item_field *>(real_item)->field;
+    if (bitmap_is_set(&table->fields_for_functional_indexes,
+                      field->field_index()))
+      return true;
+  }
+  return false;
+}
+}  // namespace
+
 /**
   Read of rows of fixed size + optional garbage + optional newline
+
+  @param thd         Pointer to THD object
+  @param info        Pointer to COPY_INFO object
+  @param table_list  Pointer to TABLE_LIST object
+  @param read_info   Pointer to READ_INFO object
+  @param skip_lines  Number of ignored lines
+                     at the start of the file.
 
   @returns true if error
 */
@@ -746,6 +775,8 @@ bool Sql_cmd_load_table::read_fixed_length(THD *thd, COPY_INFO &info,
 
     Item *item;
     while ((item = it++)) {
+      // Skip hidden generated columns.
+      if (is_hidden_generated_column(table, item)) continue;
       /*
         There is no variables in fields_vars list in this format so
         this conversion is safe (no need to check for STRING_ITEM).
@@ -768,7 +799,7 @@ bool Sql_cmd_load_table::read_fixed_length(THD *thd, COPY_INFO &info,
                             ER_WARN_TOO_FEW_RECORDS,
                             ER_THD(thd, ER_WARN_TOO_FEW_RECORDS),
                             thd->get_stmt_da()->current_row_for_condition());
-        if (field->type() == FIELD_TYPE_TIMESTAMP && !field->maybe_null()) {
+        if (field->type() == FIELD_TYPE_TIMESTAMP && !field->is_nullable()) {
           // Specific of TIMESTAMP NOT NULL: set to CURRENT_TIMESTAMP.
           Item_func_now_local::store_in(field);
         }
@@ -813,7 +844,7 @@ bool Sql_cmd_load_table::read_fixed_length(THD *thd, COPY_INFO &info,
       goto continue_loop;
     }
 
-    err = write_record(thd, table, &info, NULL);
+    err = write_record(thd, table, &info, nullptr);
     if (err) return true;
 
     /*
@@ -837,7 +868,7 @@ bool Sql_cmd_load_table::read_fixed_length(THD *thd, COPY_INFO &info,
 
 class Field_tmp_nullability_guard {
  public:
-  explicit Field_tmp_nullability_guard(Item *item) : m_field(NULL) {
+  explicit Field_tmp_nullability_guard(Item *item) : m_field(nullptr) {
     if (item->type() == Item::FIELD_ITEM) {
       m_field = ((Item_field *)item)->field;
       /*
@@ -857,6 +888,16 @@ class Field_tmp_nullability_guard {
 };
 
 /**
+  Read rows in delimiter-separated formats.
+
+  @param thd         Pointer to THD object
+  @param info        Pointer to COPY_INFO object
+  @param table_list  Pointer to TABLE_LIST object
+  @param read_info   Pointer to READ_INFO object
+  @param enclosed    ENCLOSED BY character
+  @param skip_lines  Number of ignored lines
+                     at the start of the file.
+
   @returns true if error
 */
 bool Sql_cmd_load_table::read_sep_field(THD *thd, COPY_INFO &info,
@@ -896,6 +937,9 @@ bool Sql_cmd_load_table::read_sep_field(THD *thd, COPY_INFO &info,
       uchar *pos;
       Item *real_item;
 
+      // Skip hidden generated columns.
+      if (is_hidden_generated_column(table, item)) continue;
+
       if (read_info.read_field()) break;
 
       /* If this line is to be skipped we don't want to fill field or var */
@@ -919,8 +963,7 @@ bool Sql_cmd_load_table::read_sep_field(THD *thd, COPY_INFO &info,
                      thd->get_stmt_da()->current_row_for_condition());
             return true;
           }
-          if (!field->real_maybe_null() &&
-              field->type() == FIELD_TYPE_TIMESTAMP) {
+          if (!field->is_nullable() && field->type() == FIELD_TYPE_TIMESTAMP) {
             // Specific of TIMESTAMP NOT NULL: set to CURRENT_TIMESTAMP.
             Item_func_now_local::store_in(field);
           } else {
@@ -931,7 +974,8 @@ bool Sql_cmd_load_table::read_sep_field(THD *thd, COPY_INFO &info,
             field->set_null();
           }
         } else if (item->type() == Item::STRING_ITEM) {
-          DBUG_ASSERT(NULL != dynamic_cast<Item_user_var_as_out_param *>(item));
+          DBUG_ASSERT(nullptr !=
+                      dynamic_cast<Item_user_var_as_out_param *>(item));
           ((Item_user_var_as_out_param *)item)
               ->set_null_value(read_info.read_charset);
         }
@@ -947,7 +991,8 @@ bool Sql_cmd_load_table::read_sep_field(THD *thd, COPY_INFO &info,
           table->autoinc_field_has_explicit_non_null_value = true;
         field->store((char *)pos, length, read_info.read_charset);
       } else if (item->type() == Item::STRING_ITEM) {
-        DBUG_ASSERT(NULL != dynamic_cast<Item_user_var_as_out_param *>(item));
+        DBUG_ASSERT(nullptr !=
+                    dynamic_cast<Item_user_var_as_out_param *>(item));
         ((Item_user_var_as_out_param *)item)
             ->set_value((char *)pos, length, read_info.read_charset);
       }
@@ -976,7 +1021,7 @@ bool Sql_cmd_load_table::read_sep_field(THD *thd, COPY_INFO &info,
                      thd->get_stmt_da()->current_row_for_condition());
             return true;
           }
-          if (field->type() == FIELD_TYPE_TIMESTAMP && !field->maybe_null())
+          if (field->type() == FIELD_TYPE_TIMESTAMP && !field->is_nullable())
             // Specific of TIMESTAMP NOT NULL: set to CURRENT_TIMESTAMP.
             Item_func_now_local::store_in(field);
           /*
@@ -991,7 +1036,8 @@ bool Sql_cmd_load_table::read_sep_field(THD *thd, COPY_INFO &info,
                               ER_THD(thd, ER_WARN_TOO_FEW_RECORDS),
                               thd->get_stmt_da()->current_row_for_condition());
         } else if (item->type() == Item::STRING_ITEM) {
-          DBUG_ASSERT(NULL != dynamic_cast<Item_user_var_as_out_param *>(item));
+          DBUG_ASSERT(nullptr !=
+                      dynamic_cast<Item_user_var_as_out_param *>(item));
           ((Item_user_var_as_out_param *)item)
               ->set_null_value(read_info.read_charset);
         }
@@ -1040,7 +1086,7 @@ bool Sql_cmd_load_table::read_sep_field(THD *thd, COPY_INFO &info,
       goto continue_loop;
     }
 
-    err = write_record(thd, table, &info, NULL);
+    err = write_record(thd, table, &info, nullptr);
     if (err) return true;
     /*
       We don't need to reset auto-increment field since we are restoring
@@ -1065,6 +1111,13 @@ bool Sql_cmd_load_table::read_sep_field(THD *thd, COPY_INFO &info,
 /**
   Read rows in xml format
 
+  @param thd         Pointer to THD object
+  @param info        Pointer to COPY_INFO object
+  @param table_list  Pointer to TABLE_LIST object
+  @param read_info   Pointer to READ_INFO object
+  @param skip_lines  Number of ignored lines
+                     at the start of the file.
+
   @returns true if error
 */
 bool Sql_cmd_load_table::read_xml_field(THD *thd, COPY_INFO &info,
@@ -1088,7 +1141,7 @@ bool Sql_cmd_load_table::read_xml_field(THD *thd, COPY_INFO &info,
 
     List_iterator_fast<XML_TAG> xmlit(read_info.taglist);
     xmlit.rewind();
-    XML_TAG *tag = NULL;
+    XML_TAG *tag = nullptr;
 
 #ifndef DBUG_OFF
     DBUG_PRINT("read_xml_field", ("skip_lines=%d", (int)skip_lines));
@@ -1114,6 +1167,9 @@ bool Sql_cmd_load_table::read_xml_field(THD *thd, COPY_INFO &info,
       /* If this line is to be skipped we don't want to fill field or var */
       if (skip_lines) continue;
 
+      // Skip hidden generated columns.
+      if (is_hidden_generated_column(table, item)) continue;
+
       /* find field in tag list */
       xmlit.rewind();
       tag = xmlit++;
@@ -1131,7 +1187,7 @@ bool Sql_cmd_load_table::read_xml_field(THD *thd, COPY_INFO &info,
           field->set_null();
           if (field == table->next_number_field)
             table->autoinc_field_has_explicit_non_null_value = true;
-          if (!field->maybe_null()) {
+          if (!field->is_nullable()) {
             if (field->type() == FIELD_TYPE_TIMESTAMP)
               // Specific of TIMESTAMP NOT NULL: set to CURRENT_TIMESTAMP.
               Item_func_now_local::store_in(field);
@@ -1140,7 +1196,8 @@ bool Sql_cmd_load_table::read_xml_field(THD *thd, COPY_INFO &info,
                                  ER_WARN_NULL_TO_NOTNULL, 1);
           }
         } else {
-          DBUG_ASSERT(NULL != dynamic_cast<Item_user_var_as_out_param *>(item));
+          DBUG_ASSERT(nullptr !=
+                      dynamic_cast<Item_user_var_as_out_param *>(item));
           ((Item_user_var_as_out_param *)item)->set_null_value(cs);
         }
         continue;
@@ -1153,7 +1210,8 @@ bool Sql_cmd_load_table::read_xml_field(THD *thd, COPY_INFO &info,
           table->autoinc_field_has_explicit_non_null_value = true;
         field->store(tag->value.ptr(), tag->value.length(), cs);
       } else {
-        DBUG_ASSERT(NULL != dynamic_cast<Item_user_var_as_out_param *>(item));
+        DBUG_ASSERT(nullptr !=
+                    dynamic_cast<Item_user_var_as_out_param *>(item));
         ((Item_user_var_as_out_param *)item)
             ->set_value(tag->value.ptr(), tag->value.length(), cs);
       }
@@ -1184,7 +1242,8 @@ bool Sql_cmd_load_table::read_xml_field(THD *thd, COPY_INFO &info,
                               ER_THD(thd, ER_WARN_TOO_FEW_RECORDS),
                               thd->get_stmt_da()->current_row_for_condition());
         } else {
-          DBUG_ASSERT(NULL != dynamic_cast<Item_user_var_as_out_param *>(item));
+          DBUG_ASSERT(nullptr !=
+                      dynamic_cast<Item_user_var_as_out_param *>(item));
           ((Item_user_var_as_out_param *)item)->set_null_value(cs);
         }
       }
@@ -1208,7 +1267,7 @@ bool Sql_cmd_load_table::read_xml_field(THD *thd, COPY_INFO &info,
       goto continue_loop;
     }
 
-    if (write_record(thd, table, &info, NULL)) return true;
+    if (write_record(thd, table, &info, nullptr)) return true;
 
     /*
       We don't need to reset auto-increment field since we are restoring
@@ -1279,7 +1338,7 @@ READ_INFO::READ_INFO(File file_par, uint tot_length, const CHARSET_INFO *cs,
 
   level = 0; /* for load xml */
   if (line_start.length() == 0) {
-    line_start_ptr = 0;
+    line_start_ptr = nullptr;
     start_of_line = false;
   } else {
     line_start_ptr = line_start.ptr();
@@ -1290,7 +1349,7 @@ READ_INFO::READ_INFO(File file_par, uint tot_length, const CHARSET_INFO *cs,
   if (field_term_length == line_term_length &&
       !memcmp(field_term_ptr, line_term_ptr, field_term_length)) {
     line_term_length = 0;
-    line_term_ptr = NULL;
+    line_term_ptr = nullptr;
   }
   enclosed_char = (enclosed_length = enclosed_par.length())
                       ? (uchar)enclosed_par[0]
@@ -1314,7 +1373,7 @@ READ_INFO::READ_INFO(File file_par, uint tot_length, const CHARSET_INFO *cs,
             (get_it_from_net) ? READ_NET : (is_fifo ? READ_FIFO : READ_CACHE),
             0L, true, MYF(MY_WME))) {
       my_free(buffer); /* purecov: inspected */
-      buffer = NULL;
+      buffer = nullptr;
       error = true;
     } else {
       /*
@@ -1335,7 +1394,7 @@ READ_INFO::READ_INFO(File file_par, uint tot_length, const CHARSET_INFO *cs,
 READ_INFO::~READ_INFO() {
   if (need_end_io_cache) ::end_io_cache(&cache);
 
-  if (buffer != NULL) my_free(buffer);
+  if (buffer != nullptr) my_free(buffer);
   List_iterator<XML_TAG> xmlit(taglist);
   XML_TAG *t;
   while ((t = xmlit++)) delete (t);
@@ -1372,7 +1431,7 @@ READ_INFO::~READ_INFO() {
            true if terminator was not found
 */
 inline bool READ_INFO::terminator(const uchar *ptr, size_t length) {
-  int chr = 0;  // Keep gcc happy
+  int chr = 0;
   size_t i;
   for (i = 1; i < length; i++) {
     chr = GET;
@@ -1628,7 +1687,7 @@ found_eof:
 */
 bool READ_INFO::next_line() {
   line_truncated = false;
-  start_of_line = line_start_ptr != 0;
+  start_of_line = line_start_ptr != nullptr;
   if (found_end_of_line || eof) {
     found_end_of_line = false;
     return eof;
@@ -1792,6 +1851,63 @@ int READ_INFO::read_value(int delim, String *val) {
 }
 
 /*
+  Read CDATA value if any.
+  Ignore multibyte and XML escape.
+  Note: the last character read must be '<' before calling this function.
+
+  @param[out] val           Resulting CDATA string.
+  @param[out] have_cdata    Set if really read CDATA.
+
+  @returns    Last character read or
+              my_b_EOF in case of unexpected EOF.
+*/
+int READ_INFO::read_cdata(String *val, bool *have_cdata) {
+  const char cdata_head[] = "![CDATA[";
+  const char *head_ptr = cdata_head;
+
+  /* Check for CDATA head "![CDATA[" */
+  for (size_t i = 0; i < strlen(cdata_head); i++) {
+    int chr = GET;
+
+    if (chr != *head_ptr++) {
+      /*
+        Didn't find "![CDATA[" head,
+        push back the last (unmatched) character
+      */
+      PUSH(chr);
+      /* and all matched from the head. */
+      while (i--) PUSH(*--head_ptr);
+
+      *have_cdata = false;
+      return '<';
+    }
+  }
+
+  int tail[3]{0};
+  for (tail[2] = GET; tail[2] != my_b_EOF; tail[2] = GET) {
+    /* Check for CDATA tail "]]>" */
+    if (tail[0] == ']' && tail[1] == ']' && tail[2] == '>') {
+      /* Cut last two characters ("]]") which were appended to val. */
+      DBUG_ASSERT(val->length() >= 2);
+      val->length(val->length() - 2);
+
+      *have_cdata = true;
+      return '>';
+    }
+    /* Shift the tail */
+    tail[0] = tail[1];
+    tail[1] = tail[2];
+
+    val->append(tail[2]);
+  }
+
+  /* Didn't find CDATA tail "]]>", the last character read must be my_b_EOF. */
+  DBUG_ASSERT(tail[2] == my_b_EOF);
+  *have_cdata = false;
+  return my_b_EOF;
+}
+
+/*
   Read a record in xml format
   tags and attributes are stored in taglist
   when tag set in ROWS IDENTIFIED BY is closed, we are ready and return
@@ -1885,8 +2001,16 @@ bool READ_INFO::read_xml() {
           read in the upcoming call to read_value()
          */
         PUSH(chr);
-        chr = read_value('<', &value);
-        if (chr == my_b_EOF) goto found_eof;
+
+        /* Read <![CDATA[ ... ]]> and tag's value. */
+        bool have_cdata;
+        do {
+          chr = read_value('<', &value);
+          if (chr == my_b_EOF) goto found_eof;
+
+          chr = read_cdata(&value, &have_cdata);
+          if (chr == my_b_EOF) goto found_eof;
+        } while (have_cdata);
 
         /* save value to list */
         if (tag.length() > 0 && value.length() > 0) {

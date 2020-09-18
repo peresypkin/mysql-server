@@ -1,4 +1,4 @@
-/* Copyright (c) 2004, 2019, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2004, 2020, Oracle and/or its affiliates. All rights reserved.
 
  This program is free software; you can redistribute it and/or modify
  it under the terms of the GNU General Public License, version 2.0,
@@ -55,7 +55,6 @@
 #include "field_types.h"     // enum_field_types
 #include "integer_digits.h"  // count_digits, write_digits, write_two_digits
 #include "my_byteorder.h"    // int3store
-#include "my_dbug.h"         // DBUG_ASSERT
 #include "my_systime.h"      // localtime_r
 #include "myisampack.h"      // mi_int2store
 #include "template_utils.h"  // pointer_cast
@@ -252,9 +251,8 @@ bool check_time_range_quick(const MYSQL_TIME &my_time) {
 /**
   Check datetime, date, or normalized time (i.e. time without days) range.
   @param my_time  Datetime value.
-  @returns
-  @retval   false on success
-  @retval   true  on error
+  @retval false on success
+  @retval true  on error
 */
 bool check_datetime_range(const MYSQL_TIME &my_time) {
   /*
@@ -490,14 +488,14 @@ bool str_to_datetime(const char *str, std::size_t length, MYSQL_TIME *l_time,
       tmp_value =
           tmp_value * 10 + static_cast<ulong>(static_cast<uchar>(*str - '0'));
       str++;
+      if (tmp_value > 999999) /* Impossible date part */
+      {
+        status->warnings = MYSQL_TIME_WARN_TRUNCATED;
+        l_time->time_type = MYSQL_TIMESTAMP_NONE;
+        return true;
+      }
     }
     date_len[i] = static_cast<uint>(str - start);
-    if (tmp_value > 999999) /* Impossible date part */
-    {
-      status->warnings = MYSQL_TIME_WARN_TRUNCATED;
-      l_time->time_type = MYSQL_TIMESTAMP_NONE;
-      return true;
-    }
     date[i] = tmp_value;
     not_zero_date |= tmp_value;
 
@@ -2100,7 +2098,7 @@ longlong TIME_to_longlong_packed(const MYSQL_TIME &my_time) {
     case MYSQL_TIMESTAMP_DATE:
       return TIME_to_longlong_date_packed(my_time);
     case MYSQL_TIMESTAMP_DATETIME_TZ:
-      DBUG_ASSERT(false);  // Should not be this type at this point.
+      assert(false);  // Should not be this type at this point.
     case MYSQL_TIMESTAMP_DATETIME:
       return TIME_to_longlong_datetime_packed(my_time);
     case MYSQL_TIMESTAMP_TIME:
@@ -2117,7 +2115,7 @@ longlong TIME_to_longlong_packed(const MYSQL_TIME &my_time) {
     Change a daynr to year, month and day. Daynr 0 is returned as date
     00.00.00
 */
-void get_date_from_daynr(long daynr, uint *ret_year, uint *ret_month,
+void get_date_from_daynr(int64_t daynr, uint *ret_year, uint *ret_month,
                          uint *ret_day) {
   uint year;
   uint temp;
@@ -2239,10 +2237,6 @@ uint calc_week(const MYSQL_TIME &my_time, uint week_behaviour, uint *year) {
 
 /**
    Predicate for the validity of a period.
-
-   @param period
-   @retval true if ?
-   @retval false if ?
  */
 bool valid_period(long long period) {
   if (period <= 0) return false;
@@ -2281,9 +2275,6 @@ ulong convert_month_to_period(ulong month) {
   }
   return year * 100 + month % 12 + 1;
 }
-
-/** Daynumber from year 0 to 9999-12-31 */
-#define MAX_DAY_NUMBER 3652424UL
 
 /**
    Add an interval to a MYSQL_TIME struct.
@@ -2346,9 +2337,8 @@ bool date_add_interval(MYSQL_TIME *ltime, interval_type int_type,
       ltime->hour = static_cast<uint>(sec / 3600);
       daynr = calc_daynr(ltime->year, ltime->month, 1) + days;
       /* Day number from year 0 to 9999-12-31 */
-      if (static_cast<ulonglong>(daynr) > MAX_DAY_NUMBER) goto invalid_date;
-      get_date_from_daynr(static_cast<long>(daynr), &ltime->year, &ltime->month,
-                          &ltime->day);
+      if (daynr < 0 || daynr > MAX_DAY_NUMBER) goto invalid_date;
+      get_date_from_daynr(daynr, &ltime->year, &ltime->month, &ltime->day);
       break;
     }
     case INTERVAL_DAY:
@@ -2366,8 +2356,7 @@ bool date_add_interval(MYSQL_TIME *ltime, interval_type int_type,
           goto invalid_date;
         period += interval.day;
       }
-      get_date_from_daynr(static_cast<long>(period), &ltime->year,
-                          &ltime->month, &ltime->day);
+      get_date_from_daynr(period, &ltime->year, &ltime->month, &ltime->day);
     } break;
     case INTERVAL_YEAR:
       if (interval.year > 10000UL) goto invalid_date;

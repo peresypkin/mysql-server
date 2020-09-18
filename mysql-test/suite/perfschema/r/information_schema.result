@@ -3,6 +3,7 @@ from information_schema.tables
 where TABLE_SCHEMA='performance_schema';
 TABLE_SCHEMA	lower(TABLE_NAME)	TABLE_CATALOG
 performance_schema	accounts	def
+performance_schema	binary_log_transaction_compression_stats	def
 performance_schema	cond_instances	def
 performance_schema	data_lock_waits	def
 performance_schema	data_locks	def
@@ -100,6 +101,7 @@ performance_schema	table_io_waits_summary_by_index_usage	def
 performance_schema	table_io_waits_summary_by_table	def
 performance_schema	table_lock_waits_summary_by_table	def
 performance_schema	threads	def
+performance_schema	tls_channel_status	def
 performance_schema	user_defined_functions	def
 performance_schema	user_variables_by_thread	def
 performance_schema	users	def
@@ -110,6 +112,7 @@ from information_schema.tables
 where TABLE_SCHEMA='performance_schema';
 lower(TABLE_NAME)	TABLE_TYPE	ENGINE
 accounts	BASE TABLE	PERFORMANCE_SCHEMA
+binary_log_transaction_compression_stats	BASE TABLE	PERFORMANCE_SCHEMA
 cond_instances	BASE TABLE	PERFORMANCE_SCHEMA
 data_lock_waits	BASE TABLE	PERFORMANCE_SCHEMA
 data_locks	BASE TABLE	PERFORMANCE_SCHEMA
@@ -207,6 +210,7 @@ table_io_waits_summary_by_index_usage	BASE TABLE	PERFORMANCE_SCHEMA
 table_io_waits_summary_by_table	BASE TABLE	PERFORMANCE_SCHEMA
 table_lock_waits_summary_by_table	BASE TABLE	PERFORMANCE_SCHEMA
 threads	BASE TABLE	PERFORMANCE_SCHEMA
+tls_channel_status	BASE TABLE	PERFORMANCE_SCHEMA
 user_defined_functions	BASE TABLE	PERFORMANCE_SCHEMA
 user_variables_by_thread	BASE TABLE	PERFORMANCE_SCHEMA
 users	BASE TABLE	PERFORMANCE_SCHEMA
@@ -217,6 +221,7 @@ from information_schema.tables
 where TABLE_SCHEMA='performance_schema';
 lower(TABLE_NAME)	VERSION	ROW_FORMAT
 accounts	10	Fixed
+binary_log_transaction_compression_stats	10	Dynamic
 cond_instances	10	Dynamic
 data_lock_waits	10	Dynamic
 data_locks	10	Dynamic
@@ -314,6 +319,7 @@ table_io_waits_summary_by_index_usage	10	Dynamic
 table_io_waits_summary_by_table	10	Dynamic
 table_lock_waits_summary_by_table	10	Dynamic
 threads	10	Dynamic
+tls_channel_status	10	Dynamic
 user_defined_functions	10	Dynamic
 user_variables_by_thread	10	Dynamic
 users	10	Fixed
@@ -325,6 +331,7 @@ where TABLE_SCHEMA='performance_schema' and
 lower(TABLE_NAME) not regexp '^variables|variables$|^status|session_status|global_status';
 lower(TABLE_NAME)	AVG_ROW_LENGTH
 accounts	0
+binary_log_transaction_compression_stats	0
 cond_instances	0
 data_lock_waits	0
 data_locks	0
@@ -413,6 +420,7 @@ table_io_waits_summary_by_index_usage	0
 table_io_waits_summary_by_table	0
 table_lock_waits_summary_by_table	0
 threads	0
+tls_channel_status	0
 user_defined_functions	0
 user_variables_by_thread	0
 users	0
@@ -437,6 +445,7 @@ from information_schema.tables
 where TABLE_SCHEMA='performance_schema';
 lower(TABLE_NAME)	DATA_LENGTH	MAX_DATA_LENGTH
 accounts	0	0
+binary_log_transaction_compression_stats	0	0
 cond_instances	0	0
 data_lock_waits	0	0
 data_locks	0	0
@@ -534,6 +543,7 @@ table_io_waits_summary_by_index_usage	0	0
 table_io_waits_summary_by_table	0	0
 table_lock_waits_summary_by_table	0	0
 threads	0	0
+tls_channel_status	0	0
 user_defined_functions	0	0
 user_variables_by_thread	0	0
 users	0	0
@@ -544,6 +554,7 @@ from information_schema.tables
 where TABLE_SCHEMA='performance_schema';
 lower(TABLE_NAME)	INDEX_LENGTH	DATA_FREE	AUTO_INCREMENT
 accounts	0	0	NULL
+binary_log_transaction_compression_stats	0	0	NULL
 cond_instances	0	0	NULL
 data_lock_waits	0	0	NULL
 data_locks	0	0	NULL
@@ -641,6 +652,7 @@ table_io_waits_summary_by_index_usage	0	0	NULL
 table_io_waits_summary_by_table	0	0	NULL
 table_lock_waits_summary_by_table	0	0	NULL
 threads	0	0	NULL
+tls_channel_status	0	0	NULL
 user_defined_functions	0	0	NULL
 user_variables_by_thread	0	0	NULL
 users	0	0	NULL
@@ -651,6 +663,7 @@ from information_schema.tables
 where TABLE_SCHEMA='performance_schema';
 lower(TABLE_NAME)	CREATE_TIME	UPDATE_TIME	CHECK_TIME
 accounts	NULL	NULL	NULL
+binary_log_transaction_compression_stats	NULL	NULL	NULL
 cond_instances	NULL	NULL	NULL
 data_lock_waits	NULL	NULL	NULL
 data_locks	NULL	NULL	NULL
@@ -748,6 +761,7 @@ table_io_waits_summary_by_index_usage	NULL	NULL	NULL
 table_io_waits_summary_by_table	NULL	NULL	NULL
 table_lock_waits_summary_by_table	NULL	NULL	NULL
 threads	NULL	NULL	NULL
+tls_channel_status	NULL	NULL	NULL
 user_defined_functions	NULL	NULL	NULL
 user_variables_by_thread	NULL	NULL	NULL
 users	NULL	NULL	NULL
@@ -758,6 +772,7 @@ from information_schema.tables
 where TABLE_SCHEMA='performance_schema';
 lower(TABLE_NAME)	TABLE_COLLATION	CHECKSUM
 accounts	utf8mb4_0900_ai_ci	NULL
+binary_log_transaction_compression_stats	utf8mb4_0900_ai_ci	NULL
 cond_instances	utf8mb4_0900_ai_ci	NULL
 data_lock_waits	utf8mb4_0900_ai_ci	NULL
 data_locks	utf8mb4_0900_ai_ci	NULL
@@ -855,6 +870,7 @@ table_io_waits_summary_by_index_usage	utf8mb4_0900_ai_ci	NULL
 table_io_waits_summary_by_table	utf8mb4_0900_ai_ci	NULL
 table_lock_waits_summary_by_table	utf8mb4_0900_ai_ci	NULL
 threads	utf8mb4_0900_ai_ci	NULL
+tls_channel_status	utf8mb4_0900_ai_ci	NULL
 user_defined_functions	utf8mb4_0900_ai_ci	NULL
 user_variables_by_thread	utf8mb4_0900_ai_ci	NULL
 users	utf8mb4_0900_ai_ci	NULL
@@ -865,6 +881,7 @@ from information_schema.tables
 where TABLE_SCHEMA='performance_schema';
 lower(TABLE_NAME)	CREATE_OPTIONS
 accounts	
+binary_log_transaction_compression_stats	
 cond_instances	
 data_lock_waits	
 data_locks	
@@ -962,6 +979,7 @@ table_io_waits_summary_by_index_usage
 table_io_waits_summary_by_table	
 table_lock_waits_summary_by_table	
 threads	
+tls_channel_status	
 user_defined_functions	
 user_variables_by_thread	
 users	
@@ -972,6 +990,7 @@ from information_schema.tables
 where TABLE_SCHEMA='performance_schema';
 lower(TABLE_NAME)	TABLE_COMMENT
 accounts	
+binary_log_transaction_compression_stats	
 cond_instances	
 data_lock_waits	
 data_locks	
@@ -1069,6 +1088,7 @@ table_io_waits_summary_by_index_usage
 table_io_waits_summary_by_table	
 table_lock_waits_summary_by_table	
 threads	
+tls_channel_status	
 user_defined_functions	
 user_variables_by_thread	
 users	

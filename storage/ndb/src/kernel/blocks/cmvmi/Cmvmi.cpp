@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2003, 2019, Oracle and/or its affiliates. All rights reserved.
+   Copyright (c) 2003, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -1521,14 +1521,16 @@ Cmvmi::execDUMP_STATE_ORD(Signal* signal)
   {
     if (check_block(Backup, val))
     {
-      sendSignal(BACKUP_REF, GSN_DUMP_STATE_ORD, signal, signal->length(), JBB);
+      sendSignal(BACKUP_REF, GSN_DUMP_STATE_ORD, signal,
+                 signal->length(), JBB);
     }
     else if (check_block(TC, val))
     {
     }
     else if (check_block(LQH, val))
     {
-      sendSignal(DBLQH_REF, GSN_DUMP_STATE_ORD, signal, signal->length(), JBB);
+      sendSignal(DBLQH_REF, GSN_DUMP_STATE_ORD, signal,
+                 signal->length(), JBB);
     }
     else if (check_block(CMVMI, val))
     {
@@ -1711,6 +1713,11 @@ Cmvmi::execDUMP_STATE_ORD(Signal* signal)
           delete[] sec_alloc;
         }
       }
+    }
+    else if (check_block(THRMAN, val))
+    {
+      sendSignal(THRMAN_REF, GSN_DUMP_STATE_ORD, signal,
+                 signal->length(), JBB);
     }
     return;
   }
@@ -2065,7 +2072,7 @@ Cmvmi::execDUMP_STATE_ORD(Signal* signal)
                   id, rl.m_min, rl.m_max, rl.m_curr, rl.m_spare);
       }
     }
-    m_ctx.m_mm.dump(); // To data node log
+    m_ctx.m_mm.dump(false); // To data node log
     return;
   }
   if (dumpState->args[0] == DumpStateOrd::DumpPageMemoryOnFail)

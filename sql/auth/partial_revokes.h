@@ -1,4 +1,4 @@
-/* Copyright (c) 2018, 2019, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2018, 2020, Oracle and/or its affiliates.
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License, version 2.0,
@@ -34,7 +34,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 #include "my_sqlcommand.h"
 #include "sql/auth/auth_common.h"
 #include "sql/auth/auth_utility.h"
-#include "sql/memroot_allocator.h"
+#include "sql/mem_root_allocator.h"
 
 // Forward declarations
 class THD;
@@ -45,7 +45,7 @@ class Restrictions_aggregator;
 extern MEM_ROOT global_acl_memory;
 
 // Alias declarations
-using db_revocations = memroot_collation_unordered_map<std::string, ulong>;
+using db_revocations = mem_root_collation_unordered_map<std::string, ulong>;
 using Db_access_map = std::map<std::string, unsigned long>;
 
 /**
@@ -106,8 +106,8 @@ class DB_restrictions final : public Abstract_restrictions {
 
  private:
   db_revocations &db_restrictions() { return m_restrictions; }
-  void remove(const ulong remove_restrictions, ulong &restrictions_mask) const
-      noexcept;
+  void remove(const ulong remove_restrictions,
+              ulong &restrictions_mask) const noexcept;
 
  private:
   /** Database restrictions */

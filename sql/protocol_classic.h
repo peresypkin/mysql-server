@@ -1,7 +1,7 @@
 #ifndef PROTOCOL_CLASSIC_INCLUDED
 #define PROTOCOL_CLASSIC_INCLUDED
 
-/* Copyright (c) 2002, 2019, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2002, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -108,9 +108,8 @@ class Protocol_classic : public Protocol {
     @param pkt       packet to be parsed
     @param length    size of the packet
 
-    @return
-      @retval false   ok
-      @retval true    error
+    @retval false   ok
+    @retval true    error
   */
   bool create_command(COM_DATA *com_data, enum_server_command cmd, uchar *pkt,
                       size_t length);
@@ -195,7 +194,7 @@ class Protocol_classic : public Protocol {
   /* Return packet string */
   String *get_output_packet();
   /* return packet length */
-  uint get_packet_length() { return input_packet_length; }
+  ulong get_packet_length() { return input_packet_length; }
   /* Return raw packet buffer */
   uchar *get_raw_packet() { return input_raw_packet; }
   /* Set read timeout */

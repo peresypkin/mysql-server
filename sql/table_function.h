@@ -1,4 +1,4 @@
-/* Copyright (c) 2017, 2019, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2017, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -26,7 +26,6 @@
 #include <sys/types.h>
 #include <array>  // std::array
 
-#include "lex_string.h"
 #include "my_dbug.h"
 #include "my_inttypes.h"
 #include "my_table_map.h"
@@ -43,6 +42,7 @@
 class Field;
 class Item;
 class String;
+class Table_function_json;
 class THD;
 
 /**
@@ -143,7 +143,7 @@ class Table_function {
       true  on error
       false on success
   */
-  virtual bool print(String *str, enum_query_type query_type) = 0;
+  virtual bool print(String *str, enum_query_type query_type) const = 0;
   /**
     Clean up table function
   */
@@ -184,13 +184,13 @@ enum class enum_jt_column {
   JTC_NESTED_PATH
 };
 
-/// Types of ON ERROR/ON EMPTY clause for JSON_TABLE function
+/// Types of ON EMPTY/ON ERROR clauses for JSON_TABLE and JSON_VALUE.
 /// @note uint16 enum base limitation is necessary for YYSTYPE.
-enum class enum_jtc_on : uint16 {
-  JTO_ERROR,
-  JTO_NULL,
-  JTO_DEFAULT,
-  JTO_IMPLICIT
+enum class Json_on_response_type : uint16 {
+  ERROR,
+  NULL_VALUE,
+  DEFAULT,
+  IMPLICIT
 };
 
 /**
@@ -236,9 +236,9 @@ class Json_table_column : public Create_field {
   /// Column type
   enum_jt_column m_jtc_type;
   /// Type of ON ERROR clause
-  enum_jtc_on m_on_error{enum_jtc_on::JTO_IMPLICIT};
+  Json_on_response_type m_on_error{Json_on_response_type::IMPLICIT};
   /// Type of ON EMPTY clause
-  enum_jtc_on m_on_empty{enum_jtc_on::JTO_IMPLICIT};
+  Json_on_response_type m_on_empty{Json_on_response_type::IMPLICIT};
   /// Default value string for ON EMPTY clause
   Item *m_default_empty_string{nullptr};
   /// Parsed JSON for default value of ON MISSING clause
@@ -269,9 +269,9 @@ class Json_table_column : public Create_field {
 
  public:
   explicit Json_table_column(enum_jt_column type) : m_jtc_type(type) {}
-  Json_table_column(enum_jt_column col_type, Item *path, enum_jtc_on on_err,
-                    Item *error_default, enum_jtc_on on_miss,
-                    Item *missing_default)
+  Json_table_column(enum_jt_column col_type, Item *path,
+                    Json_on_response_type on_err, Item *error_default,
+                    Json_on_response_type on_miss, Item *missing_default)
       : m_jtc_type(col_type),
         m_on_error(on_err),
         m_on_empty(on_miss),
@@ -287,14 +287,14 @@ class Json_table_column : public Create_field {
   /**
     Process JSON_TABLE's column
 
-    @param fld        field to save data to, if applicable, NULL otherwise
+    @param table_function the JSON table function
     @param[out] skip  whether current NESTED PATH column should be
                       completely skipped
     @returns
       true  on error
       false on success
   */
-  bool fill_column(Field *fld, jt_skip_reason *skip);
+  bool fill_column(Table_function_json *table_function, jt_skip_reason *skip);
 };
 
 #define MAX_NESTED_PATH 16
@@ -357,7 +357,7 @@ class Table_function_json final : public Table_function {
       true  on error
       false on success
   */
-  bool print(String *str, enum_query_type query_type) override;
+  bool print(String *str, enum_query_type query_type) const override;
 
   bool walk(Item_processor processor, enum_walk walk, uchar *arg) override;
 
@@ -389,19 +389,6 @@ class Table_function_json final : public Table_function {
     @param [out] last  last column which belongs to the given NESTED PATH
   */
   void set_subtree_to_null(Json_table_column *root, Json_table_column **last);
-  /**
-    Helper function to print single NESTED PATH column
-
-    @param col        column to print
-    @param str        string to print to
-    @param query_type type of the query
-
-    @returns
-      true  on error
-      false on success
-  */
-  bool print_nested_path(Json_table_column *col, String *str,
-                         enum_query_type query_type);
 
   /**
     Return list of fields to create result table from
@@ -410,4 +397,19 @@ class Table_function_json final : public Table_function {
   bool do_init_args() override;
   void do_cleanup() override;
 };
+
+/**
+  Print ON EMPTY or ON ERROR clauses.
+
+  @param thd             thread handler
+  @param str             the string to print to
+  @param query_type      formatting options
+  @param on_empty        true for ON EMPTY, false for ON ERROR
+  @param response_type   the type of the ON ERROR/ON EMPTY response
+  @param default_string  the default string in case of DEFAULT type
+*/
+void print_on_empty_or_error(const THD *thd, String *str,
+                             enum_query_type query_type, bool on_empty,
+                             Json_on_response_type response_type,
+                             const Item *default_string);
 #endif /* TABLE_FUNCTION_INCLUDED */

@@ -1,4 +1,4 @@
-/* Copyright (c) 2006, 2019, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2006, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -44,6 +44,9 @@ struct TABLE_LIST;
 
 bool records_are_comparable(const TABLE *table);
 bool compare_records(const TABLE *table);
+bool should_switch_to_multi_table_if_subqueries(const THD *thd,
+                                                const SELECT_LEX *select,
+                                                const TABLE_LIST *table_list);
 
 class Query_result_update final : public Query_result_interceptor {
   /// Number of tables being updated
@@ -117,20 +120,20 @@ class Query_result_update final : public Query_result_interceptor {
   Query_result_update(List<Item> *field_list, List<Item> *value_list)
       : Query_result_interceptor(),
         update_table_count(0),
-        update_tables(NULL),
-        tmp_tables(NULL),
-        main_table(NULL),
-        table_to_update(NULL),
+        update_tables(nullptr),
+        tmp_tables(nullptr),
+        main_table(nullptr),
+        table_to_update(nullptr),
         found_rows(0),
         updated_rows(0),
         fields(field_list),
         values(value_list),
-        copy_field(NULL),
+        copy_field(nullptr),
         update_completed(false),
         trans_safe(true),
         transactional_tables(false),
         error_handled(false),
-        update_operations(NULL) {}
+        update_operations(nullptr) {}
   bool need_explain_interceptor() const override { return true; }
   bool prepare(THD *thd, List<Item> &list, SELECT_LEX_UNIT *u) override;
   bool optimize() override;
@@ -144,6 +147,8 @@ class Query_result_update final : public Query_result_interceptor {
   bool send_eof(THD *thd) override;
   void abort_result_set(THD *thd) override;
   void cleanup(THD *thd) override;
+
+  bool immediate_update(TABLE_LIST *t) const override;
 };
 
 class Sql_cmd_update final : public Sql_cmd_dml {

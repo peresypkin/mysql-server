@@ -1,4 +1,4 @@
-/* Copyright (c) 2015, 2019, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2015, 2020, Oracle and/or its affiliates.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -151,7 +151,7 @@ void Json_dom::operator delete(void *ptr) noexcept { my_free(ptr); }
   cluttering the test coverage reports.
 */
 /* purecov: begin inspected */
-void Json_dom::operator delete(void *ptr, const std::nothrow_t &)noexcept {
+void Json_dom::operator delete(void *ptr, const std::nothrow_t &) noexcept {
   operator delete(ptr);
 }
 /* purecov: end */
@@ -591,19 +591,19 @@ Json_dom_ptr Json_dom::parse(const char *text, size_t length,
 
   if (success) {
     Json_dom_ptr dom = handler.get_built_doc();
-    if (dom == NULL && syntaxerr != NULL) {
+    if (dom == nullptr && syntaxerr != nullptr) {
       // The parsing failed for some other reason than a syntax error.
-      *syntaxerr = NULL;
+      *syntaxerr = nullptr;
     }
     return dom;
   }
 
   // Report the error offset and the error message if requested by the caller.
-  if (offset != NULL) *offset = reader.GetErrorOffset();
-  if (syntaxerr != NULL)
+  if (offset != nullptr) *offset = reader.GetErrorOffset();
+  if (syntaxerr != nullptr)
     *syntaxerr = rapidjson::GetParseError_En(reader.GetParseErrorCode());
 
-  return NULL;
+  return nullptr;
 }
 #endif  // ifdef MYSQL_SERVER
 
@@ -615,7 +615,7 @@ Json_dom_ptr Json_dom::parse(const char *text, size_t length,
   represent decimal or date/time values. For that, look into the
   Value an retrive field_type.
 
-  @param[in]  bintype
+  @param[in]  bintype type of json_binary
   @returns the JSON_dom JSON type.
 */
 static enum_json_type bjson2json(const json_binary::Value::enum_type bintype) {
@@ -710,7 +710,7 @@ static Json_dom *json_binary_to_dom_template(const json_binary::Value &v) {
         my_decimal m;
         if (Json_decimal::convert_from_binary(v.get_data(), v.get_data_length(),
                                               &m))
-          return NULL; /* purecov: inspected */
+          return nullptr; /* purecov: inspected */
         return new (std::nothrow) Json_decimal(m);
       }
 
@@ -732,7 +732,7 @@ static Json_dom *json_binary_to_dom_template(const json_binary::Value &v) {
 
   /* purecov: begin inspected */
   my_error(ER_INVALID_JSON_BINARY_DATA, MYF(0));
-  return NULL;
+  return nullptr;
   /* purecov: end */
 }
 
@@ -2792,7 +2792,7 @@ int Json_wrapper::compare(const Json_wrapper &other,
   Push a warning/error about a problem encountered when coercing a JSON
   value to some other data type.
 
-  @param[in] cr_error     what to issue: a warning or an error
+  @param[in] cr_error     what to issue: a warning, an error or nothing
   @param[in] target_type  the name of the target type of the coercion
   @param[in] error_code   the error code to use for the warning
   @param[in] msgnam       the name of the field/expression being coerced
@@ -2818,14 +2818,20 @@ static void handle_coercion_error(enum_coercion_error cr_error,
                current_thd->get_stmt_da()->current_row_for_condition());
       return;
     }
+    case CE_IGNORE:
+      // Caller will handle the error
+      return;
   }
 }
 
-longlong Json_wrapper::coerce_int(const char *msgnam, bool *err,
-                                  enum_coercion_error cr_error) const {
+longlong Json_wrapper::coerce_int(const char *msgnam,
+                                  enum_coercion_error cr_error, bool *err,
+                                  bool *unsigned_flag) const {
   if (err) *err = false;
+  if (unsigned_flag != nullptr) *unsigned_flag = false;
   switch (type()) {
     case enum_json_type::J_UINT:
+      if (unsigned_flag != nullptr) *unsigned_flag = true;
       return static_cast<longlong>(get_uint());
     case enum_json_type::J_INT:
       return get_int();
@@ -2837,10 +2843,9 @@ longlong Json_wrapper::coerce_int(const char *msgnam, bool *err,
       const char *start = get_data();
       size_t length = get_data_length();
       const char *end = start + length;
-      const CHARSET_INFO *cs = &my_charset_utf8mb4_bin;
 
       int error;
-      longlong value = cs->cset->strtoll10(cs, start, &end, &error);
+      longlong value = my_strtoll10(start, &end, &error);
 
       if (error > 0 || end != start + length) {
         int code =
@@ -2850,9 +2855,11 @@ longlong Json_wrapper::coerce_int(const char *msgnam, bool *err,
         if (err) *err = true;
       }
 
+      if (unsigned_flag != nullptr) *unsigned_flag = error == 0;
       return value;
     }
     case enum_json_type::J_BOOLEAN:
+      if (unsigned_flag != nullptr) *unsigned_flag = true;
       return get_boolean() ? 1 : 0;
     case enum_json_type::J_DECIMAL: {
       longlong i;
@@ -2864,6 +2871,7 @@ longlong Json_wrapper::coerce_int(const char *msgnam, bool *err,
       */
       my_decimal2int(E_DEC_FATAL_ERROR, &decimal_value, !decimal_value.sign(),
                      &i);
+      if (unsigned_flag != nullptr) *unsigned_flag = !decimal_value.sign();
       return i;
     }
     case enum_json_type::J_DOUBLE: {
@@ -2893,8 +2901,9 @@ longlong Json_wrapper::coerce_int(const char *msgnam, bool *err,
   return 0;
 }
 
-double Json_wrapper::coerce_real(const char *msgnam, bool *err,
-                                 enum_coercion_error cr_error) const {
+double Json_wrapper::coerce_real(const char *msgnam,
+                                 enum_coercion_error cr_error,
+                                 bool *err) const {
   if (err) *err = false;
   switch (type()) {
     case enum_json_type::J_DECIMAL: {
@@ -2943,8 +2952,9 @@ double Json_wrapper::coerce_real(const char *msgnam, bool *err,
 }
 
 my_decimal *Json_wrapper::coerce_decimal(my_decimal *decimal_value,
-                                         const char *msgnam, bool *err,
-                                         enum_coercion_error cr_error) const {
+                                         const char *msgnam,
+                                         enum_coercion_error cr_error,
+                                         bool *err) const {
   if (err) *err = false;
   switch (type()) {
     case enum_json_type::J_DECIMAL:
@@ -3005,7 +3015,8 @@ my_decimal *Json_wrapper::coerce_decimal(my_decimal *decimal_value,
 }
 
 bool Json_wrapper::coerce_date(MYSQL_TIME *ltime, const char *msgnam,
-                               enum_coercion_error cr_error) const {
+                               enum_coercion_error cr_error,
+                               my_time_flags_t date_flags_arg) const {
   switch (type()) {
     case enum_json_type::J_DATETIME:
     case enum_json_type::J_DATE:
@@ -3017,7 +3028,7 @@ bool Json_wrapper::coerce_date(MYSQL_TIME *ltime, const char *msgnam,
       MYSQL_TIME_STATUS status;
       THD *thd = current_thd;
       // @see Field_datetime::date_flags
-      my_time_flags_t date_flags = TIME_FUZZY_DATE;
+      my_time_flags_t date_flags = TIME_FUZZY_DATE | date_flags_arg;
       if (thd->variables.sql_mode & MODE_NO_ZERO_DATE)
         date_flags |= TIME_NO_ZERO_DATE;
       if (thd->variables.sql_mode & MODE_NO_ZERO_IN_DATE)
@@ -3393,7 +3404,7 @@ size_t Json_wrapper::make_sort_key(uchar *to, size_t to_length) const {
       double dbl = get_double();
       char buff[MY_GCVT_MAX_FIELD_WIDTH + 1];
       size_t len =
-          my_gcvt(dbl, MY_GCVT_ARG_DOUBLE, sizeof(buff) - 1, buff, NULL);
+          my_gcvt(dbl, MY_GCVT_ARG_DOUBLE, sizeof(buff) - 1, buff, nullptr);
       make_json_numeric_sort_key(buff, len, (dbl < 0), &key);
       break;
     }

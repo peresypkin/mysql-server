@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2017, 2019, Oracle and/or its affiliates. All rights reserved.
+   Copyright (c) 2017, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -552,6 +552,15 @@ bool Ndb_dd_client::deserialize_table(const dd::sdi_t &sdi,
   return true;
 }
 
+bool Ndb_dd_client::store_table(dd::Table *install_table) const {
+  DBUG_TRACE;
+
+  if (!m_client->store(install_table)) {
+    return true;  // OK
+  }
+  return false;
+}
+
 bool Ndb_dd_client::store_table(dd::Table *install_table, int ndb_table_id) {
   DBUG_TRACE;
 
@@ -758,8 +767,7 @@ bool Ndb_dd_client::migrate_table(const char *schema_name,
                                   const char *table_name,
                                   const unsigned char *frm_data,
                                   unsigned int unpacked_len,
-                                  bool force_overwrite,
-                                  bool compare_definitions) {
+                                  bool force_overwrite) {
   if (force_overwrite) {
     // Remove the old table before migrating
     DBUG_PRINT("info", ("dropping existing table"));
@@ -771,8 +779,7 @@ bool Ndb_dd_client::migrate_table(const char *schema_name,
   }
 
   const bool migrate_result = dd::ndb_upgrade::migrate_table_to_dd(
-      m_thd, schema_name, table_name, frm_data, unpacked_len, false,
-      compare_definitions);
+      m_thd, this, schema_name, table_name, frm_data, unpacked_len);
 
   return migrate_result;
 }
@@ -1039,6 +1046,15 @@ bool Ndb_dd_client::is_local_table(const char *schema_name,
   return true;
 }
 
+bool Ndb_dd_client::get_schema(const char *schema_name,
+                               const dd::Schema **schema_def) const {
+  if (m_client->acquire(schema_name, schema_def)) {
+    // Error is reported by the dictionary subsystem.
+    return false;
+  }
+  return true;
+}
+
 bool Ndb_dd_client::schema_exists(const char *schema_name,
                                   bool *schema_exists) {
   DBUG_TRACE;
@@ -1215,7 +1231,7 @@ bool Ndb_dd_client::install_tablespace(
   tablespace->set_engine("ndbcluster");
 
   // Add data files
-  for (const auto data_file_name : data_file_names) {
+  for (const auto &data_file_name : data_file_names) {
     ndb_dd_disk_data_add_file(tablespace.get(), data_file_name.c_str());
   }
 
@@ -1369,7 +1385,7 @@ bool Ndb_dd_client::install_logfile_group(
   logfile_group->set_engine("ndbcluster");
 
   // Add undofiles
-  for (const auto undo_file_name : undo_file_names) {
+  for (const auto &undo_file_name : undo_file_names) {
     ndb_dd_disk_data_add_file(logfile_group.get(), undo_file_name.c_str());
   }
 

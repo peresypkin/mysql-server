@@ -30,6 +30,7 @@
 
 #include "lex_string.h"
 #include "map_helpers.h"
+#include "mem_root_deque.h"
 #include "my_base.h"  // ha_extra_function
 #include "my_inttypes.h"
 #include "mysql/components/services/mysql_mutex_bits.h"
@@ -249,7 +250,8 @@ Field *find_field_in_table_sef(TABLE *table, const char *name);
 Item **find_item_in_list(THD *thd, Item *item, List<Item> &items, uint *counter,
                          find_item_error_report_type report_error,
                          enum_resolution_type *resolution);
-bool setup_natural_join_row_types(THD *thd, List<TABLE_LIST> *from_clause,
+bool setup_natural_join_row_types(THD *thd,
+                                  mem_root_deque<TABLE_LIST *> *from_clause,
                                   Name_resolution_context *context);
 bool wait_while_table_is_used(THD *thd, TABLE *table,
                               enum ha_extra_function function);
@@ -454,6 +456,23 @@ inline bool open_and_lock_tables(THD *thd, TABLE_LIST *tables, uint flags) {
 
   return open_and_lock_tables(thd, tables, flags, &prelocking_strategy);
 }
+
+/**
+  Get an existing table definition from the table definition cache.
+
+  Search the table definition cache for a share with the given key.
+  If the share exists or if it is in the process of being opened
+  by another thread (m_open_in_progress flag is true) return share.
+  Do not wait for share opening to finish.
+
+  @param db         database name.
+  @param table_name table name.
+
+  @retval nulltpr      a share for the table does not exist in the cache
+  @retval != nulltpr   pointer to existing share in the cache
+*/
+
+TABLE_SHARE *get_cached_table_share(const char *db, const char *table_name);
 
 /**
   A context of open_tables() function, used to recover

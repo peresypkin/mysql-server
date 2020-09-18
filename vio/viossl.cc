@@ -1,4 +1,4 @@
-/* Copyright (c) 2000, 2019, Oracle and/or its affiliates. All rights reserved.
+/* Copyright (c) 2000, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -93,7 +93,7 @@
   00 00 00 00                                           ....
   ~~~~~~~
 
-  Then the rest of the communication is swithed to TLS:
+  Then the rest of the communication is switched to TLS:
   ~~~~~~~
   16 03 01 00 5e 01 00 00    5a 03 01 4c a3 49 2e 7a    ....^...Z..L.I.z
   b5 06 75 68 5c 30 36 73    f1 82 79 70 58 4c 64 bb    ..uh\06s..ypXLd.
@@ -117,8 +117,6 @@
   @sa cli_establish_ssl, parse_client_handshake_packet
 */
 /* clang-format on */
-
-#ifdef HAVE_OPENSSL
 
 #ifndef DBUG_OFF
 
@@ -385,7 +383,7 @@ void vio_ssl_delete(Vio *vio) {
 
   if (vio->ssl_arg) {
     SSL_free((SSL *)vio->ssl_arg);
-    vio->ssl_arg = 0;
+    vio->ssl_arg = nullptr;
   }
 
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
@@ -455,7 +453,7 @@ static size_t ssl_handshake_loop(Vio *vio, SSL *ssl, ssl_handshake_func_t func,
     if (vio_socket_io_wait(vio, event)) break;
   }
 
-  vio->ssl_arg = NULL;
+  vio->ssl_arg = nullptr;
 
   return ret;
 }
@@ -636,7 +634,7 @@ static int ssl_do(struct st_VioSSLFd *ptr, Vio *vio, long timeout,
 
 #if !defined(DBUG_OFF)
     {
-      STACK_OF(SSL_COMP) *ssl_comp_methods = NULL;
+      STACK_OF(SSL_COMP) *ssl_comp_methods = nullptr;
       ssl_comp_methods = SSL_COMP_get_compression_methods();
       n = sk_SSL_COMP_num(ssl_comp_methods);
       DBUG_PRINT("info", ("Available compression methods:\n"));
@@ -733,5 +731,3 @@ int sslconnect(struct st_VioSSLFd *ptr, Vio *vio, long timeout,
 bool vio_ssl_has_data(Vio *vio) {
   return SSL_pending(static_cast<SSL *>(vio->ssl_arg)) > 0 ? true : false;
 }
-
-#endif /* HAVE_OPENSSL */

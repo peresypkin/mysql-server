@@ -1,4 +1,4 @@
-/*  Copyright (c) 2015, 2019, Oracle and/or its affiliates. All rights reserved.
+/*  Copyright (c) 2015, 2020, Oracle and/or its affiliates. All rights reserved.
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License, version 2.0,
@@ -27,6 +27,9 @@
   Header file for the Server session service. This service is to provide
   of creating sessions with the server. These sessions can be furtherly used
   together with the Command service to execute commands in the server.
+
+  @note Session should not be used after being closed, unless MYSQL_SESSION
+        handle is set to NULL.
 */
 
 #include "mysql/service_srv_session_bits.h" /* MYSQL_SESSION, srv_session_error_cb */
@@ -133,6 +136,10 @@ int srv_session_detach(MYSQL_SESSION session);
   Closes a previously opened session.
 
   @param session  Session to close
+
+  @note This method close the session but session handle is not set to NULL.
+        Session handle should be set to NULL explicitly after calling this
+        method. Session should not be used otherwise.
 
   @return
     0  success

@@ -1,5 +1,5 @@
 /*
-   Copyright (c) 2007, 2019, Oracle and/or its affiliates. All rights reserved.
+   Copyright (c) 2007, 2020, Oracle and/or its affiliates. All rights reserved.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License, version 2.0,
@@ -98,10 +98,7 @@
 using std::max;
 using std::min;
 
-#if defined(HAVE_OPENSSL)
 /*
-  Without SSL the handshake consists of one packet. This packet
-  has both client capabilites and scrambled password.
   With SSL the handshake might consist of two packets. If the first
   packet (client capabilities) has CLIENT_SSL flag set, we have to
   switch to SSL and read the second packet. The scrambled password
@@ -112,9 +109,6 @@ using std::min;
 #define SSL_HANDSHAKE_SIZE 2
 #define NORMAL_HANDSHAKE_SIZE 6
 #define MIN_HANDSHAKE_SIZE 2
-#else
-#define MIN_HANDSHAKE_SIZE 6
-#endif /* HAVE_OPENSSL */
 
 /*
   Get structure for logging connection data for the current user
@@ -130,8 +124,8 @@ int get_or_create_user_conn(THD *thd, const char *user, const char *host,
   char temp_user[USER_HOST_BUFF_SIZE];
   struct user_conn *uc = nullptr;
 
-  DBUG_ASSERT(user != 0);
-  DBUG_ASSERT(host != 0);
+  DBUG_ASSERT(user != nullptr);
+  DBUG_ASSERT(host != nullptr);
 
   user_len = strlen(user);
   temp_len = (my_stpcpy(my_stpcpy(temp_user, user) + 1, host) - temp_user) + 1;
@@ -225,7 +219,7 @@ end:
       that doesn't have a limit. Ensure the user is not using resources
       of someone else.
     */
-    thd->set_user_connect(NULL);
+    thd->set_user_connect(nullptr);
   }
   mysql_mutex_unlock(&LOCK_user_conn);
   if (error) {
@@ -284,7 +278,7 @@ void release_user_connection(THD *thd) {
       hash_user_connections->erase(std::string(uc->user, uc->len));
     }
     mysql_mutex_unlock(&LOCK_user_conn);
-    thd->set_user_connect(NULL);
+    thd->set_user_connect(nullptr);
   }
 }
 
@@ -297,7 +291,7 @@ bool check_mqh(THD *thd, uint check_command) {
   bool error = false;
   const USER_CONN *uc = thd->get_user_connect();
   DBUG_TRACE;
-  DBUG_ASSERT(uc != 0);
+  DBUG_ASSERT(uc != nullptr);
 
   mysql_mutex_lock(&LOCK_user_conn);
 
@@ -539,7 +533,7 @@ static int check_connection(THD *thd) {
                                                 main_sctx_ip.length);
     if (!(specialflag & SPECIAL_NO_RESOLVE)) {
       int rc;
-      char *host;
+      char *host = nullptr;
       LEX_CSTRING main_sctx_host;
 
 #ifdef HAVE_SETNS
@@ -590,6 +584,11 @@ static int check_connection(THD *thd) {
               min<size_t>(main_sctx_host.length, HOSTNAME_LENGTH));
         thd->m_main_security_ctx.set_host_or_ip_ptr(main_sctx_host.str,
                                                     main_sctx_host.length);
+      }
+
+      if (rc == RC_LONG_HOSTNAME) {
+        my_error(ER_HOSTNAME_TOO_LONG, MYF(0), HOSTNAME_LENGTH);
+        return 1;
       }
 
       if (rc == RC_BLOCKED_HOST) {
@@ -744,11 +743,11 @@ void end_connection(THD *thd) {
   */
   release_user_connection(thd);
 
-  if (thd->killed || (net->error && net->vio != 0)) {
+  if (thd->killed || (net->error && net->vio != nullptr)) {
     aborted_threads++;
   }
 
-  if (net->error && net->vio != 0) {
+  if (net->error && net->vio != nullptr) {
     if (!thd->killed) {
       Security_context *sctx = thd->security_context();
       LEX_CSTRING sctx_user = sctx->user();
@@ -802,7 +801,7 @@ static void prepare_new_connection_state(THD *thd) {
   // Initializing session system variables.
   alloc_and_copy_thd_dynamic_variables(thd, true);
 
-  thd->proc_info = 0;
+  thd->proc_info = nullptr;
   thd->set_command(COM_SLEEP);
   thd->init_query_mem_roots();
 
@@ -840,7 +839,7 @@ static void prepare_new_connection_state(THD *thd) {
                   sctx->host_or_ip().str, what, da->mysql_errno(),
                   da->message_text());
 
-      thd->lex->set_current_select(0);
+      thd->lex->set_current_select(nullptr);
       my_net_set_read_timeout(net, thd->variables.net_wait_timeout);
       thd->clear_error();
       net_new_transaction(net);
@@ -866,7 +865,7 @@ static void prepare_new_connection_state(THD *thd) {
       return;
     }
 
-    thd->proc_info = 0;
+    thd->proc_info = nullptr;
     thd->init_query_mem_roots();
   }
 }
@@ -914,7 +913,8 @@ void close_connection(THD *thd, uint sql_errno, bool server_shutdown,
 
 bool thd_connection_alive(THD *thd) {
   NET *net = thd->get_protocol_classic()->get_net();
-  if (!net->error && net->vio != 0 && !(thd->killed == THD::KILL_CONNECTION))
+  if (!net->error && net->vio != nullptr &&
+      !(thd->killed == THD::KILL_CONNECTION))
     return true;
   return false;
 }

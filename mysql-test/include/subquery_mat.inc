@@ -139,10 +139,14 @@ select b1, c2 from t2, t3 where b2 > c2;
 create algorithm=temptable view v2m as
 select b1, c2 from t2, t3 group by b2, c2;
 
+--sorted_result
 select * from v1 where (c2, b1) in (select c2, b1 from v2 where b1 is not null);
+--sorted_result
 select * from v1 where (c2, b1) in (select distinct c2, b1 from v2 where b1 is not null);
 
+--sorted_result
 select * from v1m where (c2, b1) in (select c2, b1 from v2m where b1 is not null);
+--sorted_result
 select * from v1m where (c2, b1) in (select distinct c2, b1 from v2m where b1 is not null);
 
 --source include/restore_sql_mode_after_turn_off_only_full_group_by.inc
@@ -1094,6 +1098,7 @@ where (t2.a,t2.a) in (select a,a from t2 as t3);
 --echo then rejected (due to outer join), and in that case, the
 --echo fallback is IN->EXISTS, subq-materialization is not tried...
 eval explain $query;
+--sorted_result
 eval $query;
 
 --echo
@@ -1237,7 +1242,7 @@ INSERT INTO t2 SELECT * FROM t2 WHERE a IN (SELECT * FROM t2 WHERE a <> 2);
 --sorted_result
 SELECT * FROM t2;
 
---echo # Not used for single-table UPDATE, DELETE:
+--echo # Used for single-table UPDATE, DELETE, by converting to multi-table
 # a) all different tables
 EXPLAIN SELECT * FROM t2 WHERE a IN (SELECT * FROM t1);
 EXPLAIN UPDATE t2 SET a=a-1 WHERE a IN (SELECT * FROM t1);

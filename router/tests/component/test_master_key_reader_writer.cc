@@ -565,8 +565,7 @@ TEST_F(MasterKeyReaderWriterTest, ConnectToMetadataServerPass) {
   auto &router = ProcessManager::launch_router({
       "-c",
       create_config_file(conf_dir.name(),
-                         "[logger]\nlevel = DEBUG\n" + metadata_cache_section +
-                             routing_section,
+                         metadata_cache_section + routing_section,
                          &default_section_map),
   });
 
@@ -579,8 +578,7 @@ TEST_F(MasterKeyReaderWriterTest, ConnectToMetadataServerPass) {
   };
 
   EXPECT_TRUE(find_in_file(logging_folder + "/mysqlrouter.log", matcher,
-                           std::chrono::milliseconds(10000)))
-      << router.get_full_logfile("mysqlrouter.log", logging_folder);
+                           std::chrono::milliseconds(10000)));
 }
 
 /**
@@ -611,8 +609,7 @@ TEST_F(MasterKeyReaderWriterTest,
   TempDirectory conf_dir("conf");
   auto &router = ProcessManager::launch_router(
       {"-c", create_config_file(conf_dir.name(),
-                                "[logger]\nlevel = DEBUG\n" +
-                                    metadata_cache_section + routing_section,
+                                metadata_cache_section + routing_section,
                                 &default_section_map)});
 
   // in windows waiting for the router's keyring reader takes about 2seconds,
@@ -655,8 +652,7 @@ TEST_F(MasterKeyReaderWriterTest, CannotLaunchRouterWhenNoMasterKeyReader) {
       {
           "-c",
           create_config_file(conf_dir.name(),
-                             "[logger]\nlevel = DEBUG\n" +
-                                 metadata_cache_section + routing_section,
+                             metadata_cache_section + routing_section,
                              &default_section_map),
       },
       EXIT_FAILURE);
@@ -690,8 +686,7 @@ TEST_F(MasterKeyReaderWriterTest, CannotLaunchRouterWhenMasterKeyIncorrect) {
   TempDirectory conf_dir("conf");
   auto &router = ProcessManager::launch_router(
       {"-c", create_config_file(conf_dir.name(),
-                                "[logger]\nlevel = DEBUG\n" +
-                                    metadata_cache_section + routing_section,
+                                metadata_cache_section + routing_section,
                                 &incorrect_master_key_default_section_map)},
       EXIT_FAILURE);
 

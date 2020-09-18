@@ -937,7 +937,7 @@ SELECT STRAIGHT_JOIN count(*) FROM
 t1 JOIN t2 ON t2.a=t1.a where t2.uq IS NULL;
 id	select_type	table	partitions	type	possible_keys	key	key_len	ref	rows	filtered	Extra
 1	SIMPLE	t1	p0,p1,p2,p3,p4,p5,p6,p7	ALL	NULL	NULL	NULL	NULL	10000	100.00	Using pushed condition (`test`.`t1`.`a` is not null)
-1	SIMPLE	t2	p0,p1,p2,p3,p4,p5,p6,p7	ref	ix	ix	10	const,test.t1.a	1	100.00	Using pushed condition (`test`.`t2`.`uq` is null)
+1	SIMPLE	t2	p0,p1,p2,p3,p4,p5,p6,p7	ref	ix	ix	10	const,test.t1.a	1	100.00	Using where
 Warnings:
 Note	1003	/* select#1 */ select straight_join count(0) AS `count(*)` from `test`.`t1` join `test`.`t2` where ((`test`.`t2`.`a` = `test`.`t1`.`a`) and (`test`.`t2`.`uq` is null))
 SELECT STRAIGHT_JOIN count(*) FROM 
@@ -1041,7 +1041,7 @@ t1	CREATE TABLE `t1` (
   `a` int DEFAULT NULL,
   `b` int DEFAULT NULL,
   UNIQUE KEY `uk1` (`a`)
-) ENGINE=ndbcluster DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='NDB_TABLE=READ_BACKUP=1'
+) ENGINE=ndbcluster DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
 # Make sure dropping multiple indexes together works
 alter table t2 drop index uk3, drop index uk4;
 # Verify through show create table
@@ -1051,7 +1051,7 @@ t1	CREATE TABLE `t1` (
   `a` int DEFAULT NULL,
   `b` int DEFAULT NULL,
   UNIQUE KEY `uk1` (`a`)
-) ENGINE=ndbcluster DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='NDB_TABLE=READ_BACKUP=1'
+) ENGINE=ndbcluster DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
 # cleanup
 drop table t2,t1;
 #
@@ -1085,7 +1085,7 @@ t1	CREATE TABLE `t1` (
   `b` int NOT NULL,
   UNIQUE KEY `uk1` (`a`),
   UNIQUE KEY `uk2` (`b`)
-) ENGINE=ndbcluster DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='NDB_TABLE=READ_BACKUP=1'
+) ENGINE=ndbcluster DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
 # Modify column on t1 - remove not null
 alter table t1 modify column a int;
 # verify that pk is now on b.
@@ -1100,7 +1100,7 @@ t1	CREATE TABLE `t1` (
   `b` int NOT NULL,
   UNIQUE KEY `uk2` (`b`),
   UNIQUE KEY `uk1` (`a`)
-) ENGINE=ndbcluster DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='NDB_TABLE=READ_BACKUP=1'
+) ENGINE=ndbcluster DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
 # Verify that the fk constraint is intact through inserts
 insert into t1 values (1,10), (2,20), (3,30);
 insert into t2 values (1), (2), (3);
@@ -1119,7 +1119,7 @@ t1	CREATE TABLE `t1` (
   `a` int DEFAULT NULL,
   `b` int NOT NULL,
   UNIQUE KEY `uk1` (`a`)
-) ENGINE=ndbcluster DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='NDB_TABLE=READ_BACKUP=1'
+) ENGINE=ndbcluster DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
 # Verify that the fk constraint is intact through inserts
 insert into t2 values (1), (2), (3);
 insert into t2 values (4);

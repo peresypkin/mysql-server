@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 2018, 2019, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 2018, 2020, Oracle and/or its affiliates. All Rights Reserved.
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License, version 2.0,
@@ -18,9 +18,9 @@ but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License, version 2.0, for more details.
 
-You should have received a copy of the GNU General Public License along with
-this program; if not, write to the Free Software Foundation, Inc.,
-51 Franklin Street, Suite 500, Boston, MA 02110-1335 USA
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA
 
 *****************************************************************************/
 
@@ -198,8 +198,8 @@ class Queue {
     m_front = -1;
     m_rear = -1;
     m_size = 0;
-    m_enqueue_event = os_event_create("redo_log_archive_enqueue");
-    m_dequeue_event = os_event_create("redo_log_archive_dequeue");
+    m_enqueue_event = os_event_create();
+    m_dequeue_event = os_event_create();
     mutex_create(LATCH_ID_REDO_LOG_ARCHIVE_QUEUE_MUTEX, &m_mutex);
   }
 
@@ -475,13 +475,6 @@ static bool terminate_consumer(bool rapid);
 static void unregister_udfs();
 static bool register_udfs();
 
-/**
-  Register a privilege.
-  @param[in]      priv_name     privilege name
-  @return         status
-    @retval       false         success
-    @retval       true          failure
-*/
 bool register_privilege(const char *priv_name) {
   ut_ad(priv_name != nullptr);
   SERVICE_TYPE(registry) *reg = mysql_plugin_registry_acquire();
@@ -592,7 +585,7 @@ static bool drop_remnants(bool force) {
   if (!redo_log_archive_file_pathname.empty()) {
     /* purecov: begin inspected */
     os_file_delete_if_exists(redo_log_archive_file_key,
-                             redo_log_archive_file_pathname.c_str(), NULL);
+                             redo_log_archive_file_pathname.c_str(), nullptr);
     /* purecov: end */
   }
   return false;
@@ -641,12 +634,17 @@ void redo_log_archive_deinit() {
 int validate_redo_log_archive_dirs(THD *thd MY_ATTRIBUTE((unused)),
                                    SYS_VAR *var MY_ATTRIBUTE((unused)),
                                    void *save, struct st_mysql_value *value) {
-  ut_a(save != NULL);
-  ut_a(value != NULL);
+  ut_a(save != nullptr);
+  ut_a(value != nullptr);
   char buff[STRING_BUFFER_USUAL_SIZE];
   int len = sizeof(buff);
   int ret = 0;
   const char *irla_dirs = value->val_str(value, buff, &len);
+
+  if (irla_dirs && (irla_dirs == buff)) {
+    irla_dirs = thd_strmake(thd, irla_dirs, len);
+  }
+
   /* Parse the variable contents. */
   const char *ptr = irla_dirs;
   while ((ptr != nullptr) && (*ptr != '\0')) {
@@ -1178,6 +1176,13 @@ static bool redo_log_archive_start(THD *thd, const char *label,
     return true;
   }
 
+  /*  Redo logging must be enabled for archiving to start. */
+  if (!mtr_t::s_logging.is_enabled()) {
+    my_error(ER_INNODB_REDO_DISABLED, MYF(0));
+    mutex_exit(&redo_log_archive_admin_mutex);
+    return true;
+  }
+
   /* Drop potential left-over resources to avoid leaks. */
   if (drop_remnants(/*force*/ false)) {
     /* purecov: begin inspected */
@@ -1223,7 +1228,7 @@ static bool redo_log_archive_start(THD *thd, const char *label,
       /* Found cases, where the file had been created in spite of !success. */
       /* purecov: begin inspected */
       os_file_delete_if_exists(redo_log_archive_file_key, file_pathname.c_str(),
-                               NULL);
+                               nullptr);
       /* purecov: end */
     }
     my_error(ER_INNODB_REDO_LOG_ARCHIVE_FILE_CREATE, MYF(0),
@@ -1237,13 +1242,13 @@ static bool redo_log_archive_start(THD *thd, const char *label,
   /*
     Create the consume_event.
   */
-  os_event_t consume_event = os_event_create("redo_log_archive_consume_event");
+  os_event_t consume_event = os_event_create();
   DBUG_EXECUTE_IF("redo_log_archive_bad_alloc", os_event_destroy(consume_event);
                   consume_event = nullptr;);
   if (consume_event == nullptr) {
     os_file_close(file_handle);
     os_file_delete_if_exists(redo_log_archive_file_key, file_pathname.c_str(),
-                             NULL);
+                             nullptr);
     my_error(ER_STD_BAD_ALLOC_ERROR, MYF(0), "redo_log_archive_consume_event",
              "redo_log_archive_start");
     mutex_exit(&redo_log_archive_admin_mutex);
@@ -1308,7 +1313,7 @@ static bool redo_log_archive_start(THD *thd, const char *label,
       redo_log_archive_file_handle.m_file = OS_FILE_CLOSED;
     }
     os_file_delete_if_exists(redo_log_archive_file_key,
-                             redo_log_archive_file_pathname.c_str(), NULL);
+                             redo_log_archive_file_pathname.c_str(), nullptr);
     redo_log_archive_file_pathname.clear();
     /* Keep recorded_error */
     redo_log_archive_session_ending = false;
@@ -1429,7 +1434,7 @@ static bool redo_log_archive_stop(THD *thd) {
     DBUG_PRINT("redo_log_archive", ("Delete redo log archive file '%s'",
                                     redo_log_archive_file_pathname.c_str()));
     os_file_delete_if_exists(redo_log_archive_file_key,
-                             redo_log_archive_file_pathname.c_str(), NULL);
+                             redo_log_archive_file_pathname.c_str(), nullptr);
   }
   redo_log_archive_file_pathname.clear();
   /* Keep recorded_error */
@@ -1643,6 +1648,20 @@ void redo_log_archive_produce(const byte *write_buf, const size_t write_size) {
   }
 }
 
+bool redo_log_archive_is_active() {
+  DBUG_TRACE;
+  /* During recovery, archiver may not be initialized yet. */
+  if (!redo_log_archive_initialized.load()) {
+    return false;
+  }
+
+  mutex_enter(&redo_log_archive_admin_mutex);
+  bool result = redo_log_archive_active;
+  mutex_exit(&redo_log_archive_admin_mutex);
+
+  return result;
+}
+
 /**
   Dequeue blocks of size QUEUE_BLOCK_SIZE, enqueued by the producer.
   Write the blocks to the redo log archive file sequentially.
@@ -1809,7 +1828,7 @@ static void redo_log_archive_consumer() {
     /* purecov: begin inspected */
     if (!redo_log_archive_file_pathname.empty()) {
       os_file_delete_if_exists(redo_log_archive_file_key,
-                               redo_log_archive_file_pathname.c_str(), NULL);
+                               redo_log_archive_file_pathname.c_str(), nullptr);
       /*
         Do not clear the filename here. Redo log archiving is not yet inactive.
       */

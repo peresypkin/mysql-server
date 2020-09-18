@@ -1,6 +1,6 @@
 /*****************************************************************************
 
-Copyright (c) 1996, 2019, Oracle and/or its affiliates. All Rights Reserved.
+Copyright (c) 1996, 2020, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2012, Facebook Inc.
 
 This program is free software; you can redistribute it and/or modify it under
@@ -549,7 +549,7 @@ bool dict_table_has_atomic_blobs(const dict_table_t *table)
 @param[in]	use_data_dir	Table uses DATA DIRECTORY
 @param[in]	shared_space	Table uses a General Shared Tablespace */
 UNIV_INLINE
-void dict_tf_set(uint32_t *flags, rec_format_t format, ulint zip_ssize,
+void dict_tf_set(uint32_t *flags, rec_format_t format, uint32_t zip_ssize,
                  bool use_data_dir, bool shared_space);
 
 /** Initialize a dict_table_t::flags pointer.
@@ -574,13 +574,13 @@ fil_space_t::flags  |     0     |    0    |     1      |    1
 ==================================================================
 @param[in]	table_flags	dict_table_t::flags
 @return tablespace flags (fil_space_t::flags) */
-uint32_t dict_tf_to_fsp_flags(uint32_t table_flags) MY_ATTRIBUTE((const));
+uint32_t dict_tf_to_fsp_flags(uint32_t table_flags);
 
 /** Extract the page size from table flags.
 @param[in]	flags	flags
 @return compressed page size, or 0 if not compressed */
 UNIV_INLINE
-const page_size_t dict_tf_get_page_size(uint32_t flags) MY_ATTRIBUTE((const));
+const page_size_t dict_tf_get_page_size(uint32_t flags);
 #endif /* !UNIV_HOTBACKUP */
 
 /** Determine the extent size (in pages) for the given table
@@ -1139,7 +1139,7 @@ struct dict_sys_t {
   static constexpr space_id_t s_min_undo_space_id =
       s_log_space_first_id - (FSP_MAX_UNDO_TABLESPACES * undo_space_id_range);
 
-  /** The highest undo  tablespace ID. */
+  /** The highest undo tablespace ID. */
   static constexpr space_id_t s_max_undo_space_id = s_log_space_first_id - 1;
 
   /** The first reserved tablespace ID */
@@ -1503,7 +1503,7 @@ ulint dict_index_zip_pad_optimal_page_size(
 /** Convert table flag to row format string.
  @return row format name */
 const char *dict_tf_to_row_format_string(
-    ulint table_flag); /*!< in: row format setting */
+    uint32_t table_flag); /*!< in: row format setting */
 /** Return maximum size of the node pointer record.
  @return maximum size of the record in bytes */
 ulint dict_index_node_ptr_max_size(const dict_index_t *index) /*!< in: index */

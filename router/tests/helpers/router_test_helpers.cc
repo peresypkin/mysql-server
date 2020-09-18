@@ -1,5 +1,5 @@
 /*
-  Copyright (c) 2015, 2019, Oracle and/or its affiliates. All rights reserved.
+  Copyright (c) 2015, 2020, Oracle and/or its affiliates. All rights reserved.
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
@@ -43,10 +43,10 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #define getcwd _getcwd
-typedef long ssize_t;
 #endif
 
 #include "keyring/keyring_manager.h"
+#include "my_inttypes.h"  // ssize_t
 #include "mysql/harness/filesystem.h"
 #include "mysqlrouter/mysql_session.h"
 #include "mysqlrouter/utils.h"
@@ -280,6 +280,18 @@ bool wait_for_port_ready(uint16_t port, std::chrono::milliseconds timeout,
 #endif
     status = connect(sock_id, ainfo->ai_addr, ainfo->ai_addrlen);
     if (status < 0) {
+      // if the address is not available, it is a client side problem.
+#ifdef _WIN32
+      if (WSAGetLastError() == WSAEADDRNOTAVAIL) {
+        throw std::system_error(mysqlrouter::get_socket_errno(),
+                                std::system_category());
+      }
+#else
+      if (errno == EADDRNOTAVAIL) {
+        throw std::system_error(mysqlrouter::get_socket_errno(),
+                                std::generic_category());
+      }
+#endif
       const auto step = std::min(timeout, MSEC_STEP);
       std::this_thread::sleep_for(std::chrono::milliseconds(step));
       timeout -= step;
@@ -312,7 +324,7 @@ namespace {
 bool real_find_in_file(
     const std::string &file_path,
     const std::function<bool(const std::string &)> &predicate,
-    std::ifstream &in_file, std::ios::streampos &cur_pos) {
+    std::ifstream &in_file, std::streampos &cur_pos) {
   if (!in_file.is_open()) {
     in_file.clear();
     Path file(file_path);
@@ -345,7 +357,7 @@ bool find_in_file(const std::string &file_path,
                   std::chrono::milliseconds sleep_time) {
   const auto STEP = std::chrono::milliseconds(100);
   std::ifstream in_file;
-  std::ios::streampos cur_pos;
+  std::streampos cur_pos;
   do {
     try {
       // This is proxy function to account for the fact that I/O can sometimes
