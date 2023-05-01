@@ -1,0 +1,47 @@
+drop table if exists `t78004_tinyint`, `t78004_smallint`, `t78004_mediumint`, `t78004_int`, `t78004_bigint`;
+create table `t78004_tinyint` (`id` tinyint not null auto_increment primary key) engine=innodb;
+insert into `t78004_tinyint` (`id`) values (124);
+insert into `t78004_tinyint` (`id`) values (null);
+insert into `t78004_tinyint` (`id`) values (null);
+select `id` from `t78004_tinyint`;
+id
+124
+125
+126
+create table `t78004_smallint` (`id` smallint not null auto_increment primary key) engine=innodb;
+insert into `t78004_smallint` (`id`) values (32764);
+insert into `t78004_smallint` (`id`) values (null);
+insert into `t78004_smallint` (`id`) values (null);
+select `id` from `t78004_smallint`;
+id
+32764
+32765
+32766
+create table `t78004_mediumint` (`id` mediumint not null auto_increment primary key) engine=innodb;
+insert into `t78004_mediumint` (`id`) values (8388604);
+insert into `t78004_mediumint` (`id`) values (null);
+insert into `t78004_mediumint` (`id`) values (null);
+select `id` from `t78004_mediumint`;
+id
+8388604
+8388605
+8388606
+create table `t78004_int` (`id` int not null auto_increment primary key) engine=innodb;
+insert into `t78004_int` (`id`) values (2147483644);
+insert into `t78004_int` (`id`) values (null);
+insert into `t78004_int` (`id`) values (null);
+select `id` from `t78004_int`;
+id
+2147483644
+2147483645
+2147483646
+create table `t78004_bigint` (`id` bigint not null auto_increment primary key) engine=innodb;
+insert into `t78004_bigint` (`id`) values (9223372036854775804);
+insert into `t78004_bigint` (`id`) values (null);
+insert into `t78004_bigint` (`id`) values (null);
+select `id` from `t78004_bigint`;
+id
+9223372036854775804
+9223372036854775805
+9223372036854775806
+drop table `t78004_tinyint`, `t78004_smallint`, `t78004_mediumint`, `t78004_int`, `t78004_bigint`;

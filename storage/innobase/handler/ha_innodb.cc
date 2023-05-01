@@ -2708,7 +2708,7 @@ ulonglong innobase_next_autoinc(
 
     ulonglong free = max_value - current;
 
-    if (free < offset || free - offset <= block) {
+    if (free < offset || free - offset < block) {
       next_value = max_value;
     } else {
       next_value = 0;
